@@ -1,2 +1,2 @@
 # don't clone build files
-/target 
+**/target 
