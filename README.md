@@ -8,8 +8,8 @@ Our goal for this project is to create an application that will use reinforcemen
 
 ## Directories
 
-- **notebooks** - contains IPython notebook tutorials and explanations for various components of the project
-- **poker_solver** - contains a cargo (Rust) project with the code for our solver
+- [notebooks](#https://github.com/kmurf1999/CSE485PokerSolver/tree/master/notebooks) - contains IPython notebook tutorials and explanations for various components of the project
+- [poker_solver](#https://github.com/kmurf1999/CSE485PokerSolver/tree/master/poker_solver) - contains a cargo (Rust) project with the code for our solver
 
 ## Sprints
 
