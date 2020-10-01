@@ -1,2 +1,6 @@
 # don't clone build files
 **/target 
+
+# dont clone data files
+*.dat
+*.code-workspace
