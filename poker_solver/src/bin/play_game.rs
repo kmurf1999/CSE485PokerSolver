@@ -14,7 +14,7 @@ pub struct GameEnvironment {
 
 impl GameEnvironment {
     /// Starts and runs poker game until completion
-    pub fn play(&self) {
+    pub fn play(&mut self) {
         // while game isn't over
         while true {
             // simulate a single hand

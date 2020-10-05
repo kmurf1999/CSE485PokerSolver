@@ -10,6 +10,7 @@ pub enum BettingRound {
 }
 
 /// Represents a player action
+#[derive(Debug, Copy, Clone)]
 pub enum Action {
     /// Bet is described as a multiple of the pot
     /// BET(1.0) is a full-pot bet
@@ -100,14 +101,14 @@ impl GameState {
     /// 
     /// ```
     /// use poker_solver::state::GameState;
-    /// let game_state = GameState::new(100, 10000);
+    /// let game_state = GameState::new(100, [10000, 10000]);
     /// assert_eq!(game_state.get_pot(), 100);
     /// ```
-    pub fn new(pot: u32, stack: u32) -> GameState {
+    pub fn new(pot: u32, stacks: [u32; 2]) -> GameState {
         GameState {
             round: BettingRound::PREFLOP,
             pot,
-            players: [PlayerState::new(stack), PlayerState::new(stack)],
+            players: stacks.map(|s| PlayerState::new(s)),
             current_player: 0,
             board: [0; 5],
             bets_settled: false
@@ -116,8 +117,18 @@ impl GameState {
     /// Return a list of valid actions a player can take
     /// 
     /// Does not account for Bet or Raise sizes
+    /// 
+    /// # Examples
+    /// 
+    /// ```
+    /// use poker_solver::state::GameState;
+    /// 
+    /// let mut state = GameState::new(0, [1000, 1000]);
+    /// assert_eq!(state.valid_actions().len(), 2); // CHECK or BET
     pub fn valid_actions(&self) -> Vec<Action> {
-        unimplemented!();
+        return ACTIONS.into_iter().filter(|&&action| {
+            self.is_action_valid(action)
+        }).cloned().collect();
     }
     /// Apply an action and return a new updated state object
     /// 
@@ -132,7 +143,7 @@ impl GameState {
     /// use poker_solver::state::GameState;
     /// use poker_solver::state::Action;
     /// let mut rng = rand::thread_rng();
-    /// let mut game_state = GameState::new(100, 10000);
+    /// let mut game_state = GameState::new(100, [10000, 10000]);
     /// assert_eq!(game_state.get_current_player_idx(), 0);
     /// game_state.deal_cards(&mut rng);
     /// game_state = game_state.apply_action(&mut rng, Action::CHECK);

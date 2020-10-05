@@ -1,3 +1,5 @@
+#![feature(array_map)]
+
 extern crate rand;
 
 /// Declare common crate modules for linking
