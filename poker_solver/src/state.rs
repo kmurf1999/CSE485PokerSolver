@@ -157,7 +157,7 @@ impl GameState {
 
                 // if player has less than wager, put player all-in
                 if next_state.current_player().stack < wager {
-                    let wager = next_state.current_player().stack;
+                    wager = next_state.current_player().stack;
                 }
 
                 next_state.current_player_mut().wager = wager;
