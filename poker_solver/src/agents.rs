@@ -8,7 +8,7 @@ use rand::rngs::ThreadRng;
 /// and chooses from available actions until the game is done
 pub trait Agent {
     /// Selects a valid action to play
-    fn get_action(&self, state: &GameState) -> Action;
+    fn get_action(&mut self, state: &GameState) -> Action;
 }
 
 /// RandomAgent is an agent with a random strategy profile
@@ -21,7 +21,7 @@ pub struct RandomAgent {
 
 impl Agent for RandomAgent {
     /// Get random valid action
-    fn get_action(&self, state: &GameState) -> Action {
+    fn get_action(&mut self, state: &GameState) -> Action {
         // If action is BET or RAISE it ensures that
         // the amount is also valid
         return Action::FOLD;
@@ -47,7 +47,7 @@ pub struct HumanAgent {
 
 impl Agent for HumanAgent {
     /// Get valid action from STDIN
-    fn get_action(&self, state: &GameState) -> Action {
+    fn get_action(&mut self, state: &GameState) -> Action {
         // make sure that if chosen action is bet or raise,
         // the the bet or raise size makes sense and is valid
         unimplemented!();
