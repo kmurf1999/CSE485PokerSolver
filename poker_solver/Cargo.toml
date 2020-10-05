@@ -8,4 +8,5 @@ edition = "2018"
 
 [dependencies]
 rust_poker = { version = "0.1.8", features = ["indexer"] }
+rand = { version = "0.7.3", features = [ "small_rng" ] }
 crossbeam = "0.7.3"
