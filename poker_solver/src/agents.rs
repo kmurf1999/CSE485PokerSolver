@@ -24,6 +24,46 @@ impl Agent for RandomAgent {
     fn get_action(&mut self, state: &GameState) -> Action {
         // If action is BET or RAISE it ensures that
         // the amount is also valid
+        let valid_actions = state.valid_actions()
+        let chosen_action = valid_actions.choose(&mut self.rng)
+        
+        if chosen_action::BET{
+            
+            //check if current stack can bet.
+            //Also if agent folded we need to make sure he wont play BET action again.
+            //this check needs FIX, im not sure what to call here ( we should get the current_stack & make sure agent not folded )
+            // if current_stack >= 0 && !folded {
+            // if current_stack == 0 { return EMPTY;} ~~~~> wait for next game.
+            
+            //getting random bet size
+            // stack_size / pot_size
+            let stack_ov_pot: f64 = stack_size/pot_size;
+            //I will make it start from 1 bet, because i guess we cant bet 0. correct if wrong
+            let rand_bet = rng.gen_range(1.0, stack_ov_pot);
+            return Action::BET;
+            
+            
+            //} end check stack_size if
+            //return FOLDED;
+            
+        }
+        
+        if chosen_action::RAISE{
+            
+            //check if current stack can RAISE.
+            //Also if agent folded we need to make sure he wont play RAISE action again.
+            //If another agent raised
+            // if ... {
+            
+            
+            
+            
+            return Action::RAISE;
+            
+            //} end raise conditions if
+            //return FOLDED;
+        }
+        
         return Action::FOLD;
     }
 }
