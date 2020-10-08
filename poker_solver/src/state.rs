@@ -1,4 +1,5 @@
 use rand::Rng;
+use std::fmt;
 
 /// The Current Betting Round a Texas Holdem game is in
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -15,7 +16,7 @@ pub enum Action {
     /// Bet is described as a multiple of the pot
     /// BET(1.0) is a full-pot bet
     BET(f32),
-    /// Raise is described as a multiple of the pot
+    /// Raise is described as a multiple of the opponents bet
     /// RAISE(1.0)
     RAISE(f32),
     /// Fold action
@@ -25,6 +26,30 @@ pub enum Action {
     /// Check
     CHECK,
 }
+
+/// For printing actions to terminal
+impl fmt::Display for Action {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        return match self {
+            Action::BET(size) => {
+                write!(f, "Bet {:.2}x", size)
+            },
+            Action::RAISE(size) => {
+                write!(f, "Raise {:.2}x", size)
+            },
+            Action::FOLD => {
+                write!(f, "Fold")
+            },
+            Action::CALL => {
+                write!(f, "Call")
+            },
+            Action::CHECK => {
+                write!(f, "Check")
+            }
+        }
+    }
+}
+
 
 /// List of available actions
 /// 
@@ -85,6 +110,22 @@ impl PlayerState {
             cards: [0; 2],
             has_folded: false
         }
+    }
+    /// Return stack size
+    pub const fn get_stack(&self) -> u32 {
+        return self.stack;
+    }
+    /// Return wager
+    pub const fn get_wager(&self) -> u32 {
+        return self.wager;
+    }
+    /// Return cards
+    pub const fn get_cards(&self) -> &[u8; 2] {
+        return &self.cards;
+    }
+    /// Return has folded
+    pub const fn has_folded(&self) -> bool {
+        return self.has_folded;
     }
 }
 
@@ -166,7 +207,7 @@ impl GameState {
                 next_state.current_player = 1 - next_state.current_player;
             },
             Action::RAISE(amt) => {
-                let mut wager = (amt * (next_state.pot as f32)) as u32;
+                let mut wager = (amt * (next_state.other_player().get_wager() as f32)) as u32;
                 // if player has less than wager, put player all in
                 if next_state.current_player().stack < wager {
                     wager = next_state.current_player().stack;
@@ -333,11 +374,17 @@ impl GameState {
         match action {
             Action::BET(_) => {
                 // only valid if other player has not bet
-                return self.other_player().wager == 0;
+                // and we have chips to bet
+                let valid = (self.other_player().wager == 0)
+                && (self.current_player().stack > 0);
+                return valid;
             },
             Action::RAISE(_) => {
                 // only valid if other player has bet
-                return self.other_player().wager != 0;
+                // and we have more money than their wager
+                let valid = (self.other_player().wager != 0)
+                && (self.current_player().stack > self.other_player().wager);
+                return valid;
             },
             Action::CALL => {
                 // only valid if other player has bet
@@ -353,37 +400,58 @@ impl GameState {
             }
         }
     }
-    /// Returns true if a player has folded
-    fn has_player_folded(&self) -> bool {
-        self.current_player().has_folded || self.other_player().has_folded
+    /// Returns index of folded player or None
+    pub fn player_folded(&self) -> Option<u8> {
+        if self.current_player().has_folded {
+            return Some(self.current_player);
+        }
+        if self.other_player().has_folded {
+            return Some(1 - self.current_player);
+        }
+        return None;
     }
-    /// Returns true if a player is all in
-    fn is_player_all_in(&self) -> bool {
-        self.current_player().stack == 0 || self.other_player().stack == 0
+    /// Return index of all in player or None
+    pub fn player_all_in(&self) -> Option<u8> {
+        if self.current_player().stack == 0 {
+            return Some(self.current_player);
+        }
+        if self.other_player().stack == 0 {
+            return Some(1 - self.current_player);
+        }
+        return None;
     }
     /// Return true if game is over
-    fn is_game_over(&self) -> bool {
-        self.has_player_folded() || self.is_player_all_in() || (self.round == BettingRound::RIVER && self.bets_settled)
+    pub fn is_game_over(&self) -> bool {
+        self.player_folded().is_some()
+        || self.player_all_in().is_some()
+        || (self.round == BettingRound::RIVER && self.bets_settled)
     }
     /// Return pot size (# of chips)
     pub const fn get_pot(&self) -> u32 {
         return self.pot;
     }
-    /// Get stack size of player at index `player_idx`
-    pub fn get_stack(&self, player_idx: usize) -> u32 {
-        assert!(player_idx == 0 || player_idx == 1);
-        return self.players[player_idx].stack;
+    /// Return round
+    pub const fn get_round(&self) -> BettingRound {
+        return self.round;
     }
     /// Return index of current player
     pub const fn get_current_player_idx(&self) -> u8 {
         return self.current_player;
     }
+    /// Return reference to player at index
+    pub const fn get_player(&self, player_index: usize) -> &PlayerState {
+        return &self.players[player_index];
+    }
+    /// Return reference to public cards
+    pub const fn get_board(&self) -> &[u8; 5] {
+        return &self.board;
+    }
     /// Return a reference to the acting player state
-    fn current_player(&self) -> &PlayerState {
+    pub fn current_player(&self) -> &PlayerState {
         return &self.players[usize::from(self.current_player)];
     }
     /// Return a reference to the not acting player state
-    fn other_player(&self) -> &PlayerState {
+    pub fn other_player(&self) -> &PlayerState {
         return &self.players[usize::from(1-self.current_player)];
     }
     /// Return a mutable reference to the acting player state
@@ -395,7 +463,7 @@ impl GameState {
         return &mut self.players[usize::from(1 - self.current_player)];
     }
     /// Advance the game state to the next betting round
-    fn next_round<R: Rng>(&mut self, rng: &mut R) {
+    pub fn next_round<R: Rng>(&mut self, rng: &mut R) {
         // advance round or do nothing if round is river
         match self.round {
             BettingRound::PREFLOP => {
