@@ -1,6 +1,8 @@
 use crate::state::{ Action, GameState };
 use rand::thread_rng;
+use rand::Rng;
 use rand::rngs::ThreadRng;
+use rand::seq::SliceRandom;
 
 /// Entity that employs a strategy to play poker
 /// 
@@ -24,7 +26,25 @@ impl Agent for RandomAgent {
     fn get_action(&mut self, state: &GameState) -> Action {
         // If action is BET or RAISE it ensures that
         // the amount is also valid
-        return Action::FOLD;
+        let actions = state.valid_actions();
+        let chosen_action = actions.choose(&mut self.rng)
+            .unwrap()
+            .to_owned();
+
+        if let Action::BET(_) = chosen_action {
+            // Stack to pot ratio
+            let spr = state.current_player().get_stack() as f32 / state.get_pot() as f32;
+            let bet_size = self.rng.gen_range(0.0, spr);
+            return Action::BET(bet_size);
+        }
+
+        if let Action::RAISE(_) = chosen_action {
+            let swr = state.current_player().get_stack() as f32 / state.other_player().get_wager() as f32;
+            let raise_size = self.rng.gen_range(1.0, swr);
+            return Action::RAISE(raise_size);
+        }
+
+        return chosen_action;
     }
 }
 
