@@ -55,12 +55,15 @@ impl GameEnvironment {
             println!("Current stack sizes [{} : {}]", self.stacks[0], self.stacks[1]);
             println!("");
 
+
+
             // create a state object using current stacks as initial stacks
             let mut state = GameState::new(10, self.stacks.clone());
             // deal cards to both players
             state.deal_cards(&mut self.rng);
-
-            // get next action self.agents[state.current_player].get_action
+            //Assuming Player 1 is the HumanAgent
+            println!("Your cards are: [{}]", cards_to_str(state.get_player(1).get_cards()));
+            
             while !state.is_game_over() {
                 let acting_player = usize::from(state.get_current_player_idx());
                 let action = self.agents[acting_player].get_action(&state);
@@ -130,7 +133,8 @@ fn main() {
     let mut game = GameEnvironment {
         agents: [
             Box::new(RandomAgent::new()),
-            Box::new(RandomAgent::new())
+            Box::new(HumanAgent::new())
+
         ],
         rng: thread_rng(),
         stacks: [10000; 2]
