@@ -1,37 +1,8 @@
 use poker_solver::agents::{Agent, HumanAgent, RandomAgent};
 use rand::thread_rng;
 use rand::rngs::ThreadRng;
-use std::iter::FromIterator;
 use poker_solver::state::{GameState, BettingRound};
-
-use rust_poker::hand_evaluator::{evaluate, CARDS, Hand};
-use rust_poker::hand_range::Combo;
-use rust_poker::constants::{ RANK_TO_CHAR, SUIT_TO_CHAR };
-
-/// Scores the hand
-/// 
-/// Makes the best 5 card hand from 7 cards and generates a score
-/// higher score is better
-fn score_hand(board: &[u8], private_cards: &[u8]) -> u16 {
-    let mut hand = Hand::empty();
-    board.into_iter().for_each(|c| {
-        hand += CARDS[usize::from(*c)];
-    });
-    private_cards.into_iter().for_each(|c| {
-        hand += CARDS[usize::from(*c)];
-    });
-    return evaluate(&hand);
-}
-
-/// Transform card array into a readable string
-fn cards_to_str(cards: &[u8]) -> String {
-    let mut chars: Vec<char> = Vec::new();
-    cards.into_iter().for_each(|c| {
-        chars.push(RANK_TO_CHAR[usize::from(*c >> 2)]);
-        chars.push(SUIT_TO_CHAR[usize::from(*c & 3)]);
-    });
-    return String::from_iter(chars);
-}
+use poker_solver::card::{cards_to_str, score_hand};
 
 /// Simulates HUNL Texas Holdem game between two agents
 pub struct GameEnvironment {
@@ -46,7 +17,6 @@ pub struct GameEnvironment {
 impl GameEnvironment {
     /// Starts and runs poker game until completion
     pub fn play(&mut self) {
-        println!("GAME START");
         // while game isn't over
         while !self.game_is_over() {
             // simulate a single hand
@@ -55,33 +25,31 @@ impl GameEnvironment {
             println!("Current stack sizes [{} : {}]", self.stacks[0], self.stacks[1]);
             println!("");
 
-
+            println!("Posting blinds");
+            // big blind is 10
+            // small blind is 5
 
             // create a state object using current stacks as initial stacks
-            let mut state = GameState::new(10, self.stacks.clone());
+            let mut state = GameState::init_with_blinds(self.stacks, [5, 10]);
             // deal cards to both players
             state.deal_cards(&mut self.rng);
-            //Assuming Player 1 is the HumanAgent
-            println!("Your cards are: [{}]", cards_to_str(state.get_player(1).get_cards()));
-            
+
             while !state.is_game_over() {
-                let acting_player = usize::from(state.get_current_player_idx());
+                let acting_player = usize::from(state.current_player_idx());
                 let action = self.agents[acting_player].get_action(&state);
                 // print to terminal
                 println!("Player {} has chosen to {}", acting_player, action);
                 state = state.apply_action(&mut self.rng, action);
+                println!("Stacks: [{}, {}],  Pot: {}", state.player(0).stack(), state.player(1).stack(), state.pot());
+                println!("");
             }
 
             // final pot value
-            let pot = state.get_pot();
+            let pot = state.pot();
             // copy stack values after hand
             // (before we award chips)
-            self.stacks[0] = state.get_player(0).get_stack();
-            self.stacks[1] = state.get_player(1).get_stack();
-
-            println!("");
-            println!("Hand has ended");
-            println!("");
+            self.stacks[0] = state.player(0).stack();
+            self.stacks[1] = state.player(1).stack();
 
             if let Some(player_fold) = state.player_folded() {
                 println!("Player {} has folded.  Player {} wins {}", player_fold, 1 - player_fold, pot);
@@ -89,20 +57,20 @@ impl GameEnvironment {
                 // award chips to winner
                 self.stacks[1 - usize::from(player_fold)] += pot;
             } else {
-                println!("The board is [{}]", cards_to_str(state.get_board()));
-                println!("Player {} has [{}]", 0, cards_to_str(state.get_player(0).get_cards()));
-                println!("Player {} has [{}]", 1, cards_to_str(state.get_player(1).get_cards()));
                 // deal cards until there are 5
-                while state.get_round() != BettingRound::RIVER {
+                while state.round() != BettingRound::RIVER {
                     // next round deals cards and increments round
                     state.next_round(&mut self.rng);
                 }
+                println!("The board is [{}]", cards_to_str(state.board()));
+                println!("Player {} has [{}]", 0, cards_to_str(state.player(0).cards()));
+                println!("Player {} has [{}]", 1, cards_to_str(state.player(1).cards()));
+
                 // evaluate winner
                 // create public cards
-                let board = state.get_board();
-                let player_0_score = score_hand(board, state.get_player(0).get_cards());
-                let player_1_score = score_hand(board, state.get_player(1).get_cards());
-                println!("{} {}", player_0_score, player_1_score);
+                let board = state.board();
+                let player_0_score = score_hand(board, state.player(0).cards());
+                let player_1_score = score_hand(board, state.player(1).cards());
                 if player_0_score == player_1_score {
                     println!("Tie!");
                     // tie
@@ -119,7 +87,12 @@ impl GameEnvironment {
                 }
             }
 
+            // So each hand players take turn going first
+            self.stacks.reverse();
+            self.agents.reverse();
         }
+
+        println!("Game over");
     }
     /// Return true is game has finished
     /// 
@@ -132,9 +105,8 @@ impl GameEnvironment {
 fn main() {
     let mut game = GameEnvironment {
         agents: [
+            Box::new(HumanAgent::new()),
             Box::new(RandomAgent::new()),
-            Box::new(HumanAgent::new())
-
         ],
         rng: thread_rng(),
         stacks: [10000; 2]
