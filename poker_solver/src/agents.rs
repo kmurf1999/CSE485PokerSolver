@@ -70,7 +70,79 @@ impl Agent for HumanAgent {
     fn get_action(&mut self, state: &GameState) -> Action {
         // make sure that if chosen action is bet or raise,
         // the the bet or raise size makes sense and is valid
-        unimplemented!();
+        let actions = state.valid_actions();
+
+        //List Valid actions
+        eprintln!("Valid actions: {:?}", actions);
+        println!("Please select an action: ");
+        //getting user input
+        let mut input= String::new();
+        let mut chosen_action:Action = Action::FOLD;
+
+        io::stdin().read_line(&mut input);
+
+                //CALL
+                if input.contains("CALL"){
+
+                    chosen_action = Action::CALL;
+
+                    //return Action::CALL;
+
+                //FOLD
+                } else if input.contains("FOLD"){
+
+                    chosen_action = Action::FOLD;
+                    //return Action::FOLD;
+
+                //BET
+                } else if input.contains("BET"){
+
+                    let spr = state.current_player().get_stack() as f32 / state.get_pot() as f32;
+                    let mut bet_s = String::new();
+                    println!("Please input bet size (Range {},{}): ", 0.0, spr);
+                    io::stdin().read_line(&mut bet_s);
+                    let bet_value = bet_s.trim().parse::<f32>().unwrap();
+
+                    if bet_value < 0.0 && bet_value > spr {
+                        println!("Out of range !");
+                        return Action::FOLD;
+                    } else {
+                        chosen_action = Action::BET(bet_value);
+                        //return Action::BET(bet_value);
+                    }
+
+
+                } else if input.contains("RAISE"){
+
+                    let swr = state.current_player().get_stack() as f32 / state.other_player().get_wager() as f32;
+
+                    let mut raise_size = String::new();
+                    println!("Please input bet size (Range {},{}): ", 1.0, swr);
+                    io::stdin().read_line(&mut raise_size);
+                    let raise_value = raise_size.trim().parse::<f32>().unwrap();
+
+                    if raise_value < 1.0 && raise_value > swr {
+                        println!("Out of range !");
+
+                        return Action::FOLD;
+                    } else {
+
+                        chosen_action = Action::RAISE(raise_value)
+                        //return Action::BET(raise_value);
+                    }
+
+                } else if input.contains("CHECK"){
+
+                    chosen_action = Action::CHECK;
+                    //return Action::CHECK;
+                }
+
+
+
+
+        return chosen_action;
+
+        //unimplemented!();
     }
 }
 
