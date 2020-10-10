@@ -3,6 +3,9 @@ use rand::thread_rng;
 use rand::Rng;
 use rand::rngs::ThreadRng;
 use rand::seq::SliceRandom;
+use std::io::{self, BufRead};
+
+use crate::card::{cards_to_str};
 
 /// Entity that employs a strategy to play poker
 /// 
@@ -32,15 +35,14 @@ impl Agent for RandomAgent {
             .to_owned();
 
         if let Action::BET(_) = chosen_action {
-            // Stack to pot ratio
-            let spr = state.current_player().get_stack() as f32 / state.get_pot() as f32;
-            let bet_size = self.rng.gen_range(0.0, spr);
+            let max_bet = state.current_player().stack();
+            let bet_size = self.rng.gen_range(1, max_bet);
             return Action::BET(bet_size);
         }
 
         if let Action::RAISE(_) = chosen_action {
-            let swr = state.current_player().get_stack() as f32 / state.other_player().get_wager() as f32;
-            let raise_size = self.rng.gen_range(1.0, swr);
+            let max_raise = state.current_player().stack() - (state.other_player().wager() - state.current_player().wager());
+            let raise_size = self.rng.gen_range(1, max_raise);
             return Action::RAISE(raise_size);
         }
 
@@ -71,78 +73,104 @@ impl Agent for HumanAgent {
         // make sure that if chosen action is bet or raise,
         // the the bet or raise size makes sense and is valid
         let actions = state.valid_actions();
+        let stdin = io::stdin();
+        let mut is_action_valid = false;
 
-        //List Valid actions
-        eprintln!("Valid actions: {:?}", actions);
-        println!("Please select an action: ");
-        //getting user input
-        let mut input= String::new();
-        let mut chosen_action:Action = Action::FOLD;
+        println!("");
+        println!("Please select an action. ");
+        println!("You have {} chips, your opponent has {}", state.current_player().stack(), state.other_player().stack());
+        println!("The pot is: {}", state.pot());
+        println!("The board cards are: [{}]", cards_to_str(state.board()));
+        println!("Your cards are: [{}]", cards_to_str(state.current_player().cards()));
 
-        io::stdin().read_line(&mut input);
-
-                //CALL
-                if input.contains("CALL"){
-
-                    chosen_action = Action::CALL;
-
-                    //return Action::CALL;
-
-                //FOLD
-                } else if input.contains("FOLD"){
-
-                    chosen_action = Action::FOLD;
-                    //return Action::FOLD;
-
-                //BET
-                } else if input.contains("BET"){
-
-                    let spr = state.current_player().get_stack() as f32 / state.get_pot() as f32;
-                    let mut bet_s = String::new();
-                    println!("Please input bet size (Range {},{}): ", 0.0, spr);
-                    io::stdin().read_line(&mut bet_s);
-                    let bet_value = bet_s.trim().parse::<f32>().unwrap();
-
-                    if bet_value < 0.0 && bet_value > spr {
-                        println!("Out of range !");
-                        return Action::FOLD;
-                    } else {
-                        chosen_action = Action::BET(bet_value);
-                        //return Action::BET(bet_value);
-                    }
-
-
-                } else if input.contains("RAISE"){
-
-                    let swr = state.current_player().get_stack() as f32 / state.other_player().get_wager() as f32;
-
-                    let mut raise_size = String::new();
-                    println!("Please input bet size (Range {},{}): ", 1.0, swr);
-                    io::stdin().read_line(&mut raise_size);
-                    let raise_value = raise_size.trim().parse::<f32>().unwrap();
-
-                    if raise_value < 1.0 && raise_value > swr {
-                        println!("Out of range !");
-
-                        return Action::FOLD;
-                    } else {
-
-                        chosen_action = Action::RAISE(raise_value)
-                        //return Action::BET(raise_value);
-                    }
-
-                } else if input.contains("CHECK"){
-
-                    chosen_action = Action::CHECK;
-                    //return Action::CHECK;
+        while !is_action_valid {
+            is_action_valid = true;
+            // List Valid actions
+            actions.iter().enumerate().for_each(|(i, a)| {
+                match a {
+                    Action::BET(_) => println!("{}: Bet", i),
+                    Action::RAISE(_) => println!("{}: Raise", i),
+                    Action::CALL => {
+                        let call_amt = state.other_player().wager() - state.current_player().wager();
+                        println!("{}: Call {}", i, call_amt);
+                    },
+                    Action::FOLD => println!("{}: Fold", i),
+                    Action::CHECK => println!("{}: Check", i),
                 }
-
-
-
-
-        return chosen_action;
-
-        //unimplemented!();
+            });
+            // get input
+            let mut input = String::new();
+            stdin.lock().read_line(&mut input).expect("could not read line");
+            // ensure input is a number in correct range
+            let action_index = match input.trim().parse::<usize>() {
+                Ok(num) => {
+                    if num > actions.len() - 1 {
+                        is_action_valid = false;
+                        println!("Action must be between {} and {}", 0, actions.len() - 1);
+                        continue;
+                    }
+                    num
+                },
+                Err(_) => {
+                    is_action_valid = false;
+                    println!("Input must be a number. Retrying.");
+                    continue;
+                }
+            };
+            // ensure bet is correct size
+            if let Action::BET(_) = actions[action_index] {
+                let max_bet = state.current_player().stack();
+                let mut bet_s = String::new();
+                println!("Please input a bet size from ({}, {}): ", 1, max_bet);
+                stdin.lock().read_line(&mut bet_s).unwrap();
+                match bet_s.trim().parse::<u32>() {
+                    Ok(num) => {
+                        if num == 0 || num > max_bet {
+                            is_action_valid = false;
+                            println!("Bet size out of range.  Retrying.");
+                            continue;
+                        }
+                        if is_action_valid {
+                            return Action::BET(num);
+                        }
+                    },
+                    Err(_) => {
+                        is_action_valid = false;
+                        println!("Bet size must be a floating point number. Retrying.");
+                        continue;
+                    }
+                };
+            }
+            if let Action::RAISE(_) = actions[action_index] {
+                let max_raise = state.current_player().stack() - (state.other_player().wager() - state.current_player().wager());
+                let mut raise_s = String::new();
+                println!("Please input a raise size from ({},{}) over opponent raise: ", 1, max_raise);
+                stdin.lock().read_line(&mut raise_s).unwrap();
+                match raise_s.trim().parse::<u32>() {
+                    Ok(num) => {
+                        if num == 1 || num > max_raise {
+                            is_action_valid = false;
+                            println!("Raise size out of range.  Retrying.");
+                            continue;
+                        }
+                        if is_action_valid {
+                            return Action::RAISE(num);
+                        }
+                    },
+                    Err(_) => {
+                        is_action_valid = false;
+                        println!("Raise size must be a number greater than 0. Retrying.");
+                        continue;
+                    }
+                };
+            }
+            // if CALL, CHECK, or FOLD return
+            if is_action_valid {
+                return actions[action_index];
+            }
+        }
+        // should never reach this
+        return actions[0];
     }
 }
 
