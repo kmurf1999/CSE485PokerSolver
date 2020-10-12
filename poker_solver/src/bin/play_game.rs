@@ -25,12 +25,13 @@ impl GameEnvironment {
             println!("Current stack sizes [{} : {}]", self.stacks[0], self.stacks[1]);
             println!("");
 
-            println!("Posting blinds");
+            println!("Posting blinds & Dealing cards");
+            println!("");
             // big blind is 10
             // small blind is 5
 
             // create a state object using current stacks as initial stacks
-            let mut state = GameState::init_with_blinds(self.stacks, [5, 10]);
+            let mut state = GameState::init_with_blinds(self.stacks, [10, 5]);
             // deal cards to both players
             state.deal_cards(&mut self.rng);
 
@@ -39,9 +40,15 @@ impl GameEnvironment {
                 let action = self.agents[acting_player].get_action(&state);
                 // print to terminal
                 println!("Player {} has chosen to {}", acting_player, action);
-                state = state.apply_action(&mut self.rng, action);
+                state = state.apply_action(action);
                 println!("Stacks: [{}, {}],  Pot: {}", state.player(0).stack(), state.player(1).stack(), state.pot());
                 println!("");
+                // if betting is finished, advance to next round
+                if state.bets_settled() && !state.is_game_over() {
+                    state.next_round(&mut self.rng);
+                    println!("Dealing {}...", state.round());
+                    println!("Board cards: [{}]", cards_to_str(state.board()));
+                }
             }
 
             // final pot value
