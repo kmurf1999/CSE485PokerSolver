@@ -1,11 +1,12 @@
-use crate::state::{ Action, GameState };
+use crate::state::{Action, GameState};
 use rand::thread_rng;
 use rand::Rng;
 use rand::rngs::ThreadRng;
 use rand::seq::SliceRandom;
 use std::io::{self, BufRead};
 
-use crate::card::{cards_to_str};
+use crate::card::{cards_to_str, player_hand_score};
+use colored::Colorize;
 
 /// Entity that employs a strategy to play poker
 /// 
@@ -77,25 +78,43 @@ impl Agent for HumanAgent {
         let mut is_action_valid = false;
 
         println!("");
-        println!("Please select an action. ");
-        println!("You have {} chips, your opponent has {}", state.current_player().stack(), state.other_player().stack());
-        println!("The pot is: {}", state.pot());
-        println!("The board cards are: [{}]", cards_to_str(state.board()));
-        println!("Your cards are: [{}]", cards_to_str(state.current_player().cards()));
+        println!("{}", "Please select an action.".bright_cyan());
+        println!("{} {} {} {}", "You have".bright_yellow(), state.current_player().stack().to_string().red(), "chips, your opponent has".bright_yellow(), state.other_player().stack().to_string().red());
+        println!("The pot is: {}", state.pot().to_string().green());
+        println!("The board cards are: [{}]", cards_to_str(state.board()).to_string().bright_yellow());
+        println!("{} cards are: [{}]", "Your".red(), cards_to_str(state.current_player().cards()).to_string().bright_yellow());
+
+        //Hand Strength -> Human play
+        //Suggestion to Play this hand or not.
+        //Will be used for The RandomAgent brain in the future
+        let player_strength = player_hand_score(state.current_player().cards());
+
+
+
+
+        if player_strength >= 4399 {
+            println!("{} ", "You have strong cards, Call it !".red())
+        } else {
+            println!("{} ", "You have weak cards, there might be a risk !".red())
+        }
+
+        //if state.round() == BettingRound::FLOP {
+        //    println!("Board strength: {:?}", board_strength.to_string());
+        //}
 
         while !is_action_valid {
             is_action_valid = true;
             // List Valid actions
             actions.iter().enumerate().for_each(|(i, a)| {
                 match a {
-                    Action::BET(_) => println!("{}: Bet", i),
-                    Action::RAISE(_) => println!("{}: Raise", i),
+                    Action::BET(_) => println!("{}: {}", i.to_string().red(), "Bet".bright_cyan()),
+                    Action::RAISE(_) => println!("{}: {}", i.to_string().red(), "Raise".bright_cyan()),
                     Action::CALL => {
                         let call_amt = state.other_player().wager() - state.current_player().wager();
-                        println!("{}: Call {}", i, call_amt);
+                        println!("{}: {} {}", i.to_string().red(), "Call".bright_cyan(),call_amt.to_string().bright_yellow());
                     },
-                    Action::FOLD => println!("{}: Fold", i),
-                    Action::CHECK => println!("{}: Check", i),
+                    Action::FOLD => println!("{}: {}", i.to_string().red(), "Fold".bright_cyan()),
+                    Action::CHECK => println!("{}: {}", i.to_string().red(), "Check".bright_cyan()),
                 }
             });
             // get input
