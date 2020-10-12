@@ -11,6 +11,19 @@ pub enum BettingRound {
     RIVER
 }
 
+
+impl fmt::Display for BettingRound {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let round_str = match self {
+            BettingRound::PREFLOP => "Preflop",
+            BettingRound::FLOP => "Flop",
+            BettingRound::TURN => "Turn",
+            BettingRound::RIVER => "River",
+        };
+        write!(f, "{}", round_str)
+    }
+}
+
 /// Represents a player action
 #[derive(Debug, Copy, Clone)]
 pub enum Action {
@@ -158,19 +171,27 @@ impl GameState {
         }
     }
     /// Creates a game state object but with initial wager equal to blinds
+    /// 
+    /// Both players post their blinds
+    /// First to act is switched preflop
+    /// 
+    /// # Arguments
+    /// 
+    /// * `stacks` The stack size of each player
+    /// * `blidds` Big and small blind size, Big should come before small
     pub fn init_with_blinds(stacks: [u32; 2], blinds: [u32; 2]) -> GameState {
         let mut players = stacks.map(|s| PlayerState::new(s));
-        let small_blind = min(stacks[0], blinds[0]);
-        players[0].stack -= small_blind;
-        players[0].wager = small_blind;
-        let big_blind = min(stacks[1], blinds[1]);
-        players[1].stack -= big_blind;
-        players[1].wager = big_blind;
+        let big_blind = min(stacks[0], blinds[0]);
+        players[0].stack -= big_blind;
+        players[0].wager = big_blind;
+        let small_blind = min(stacks[1], blinds[1]);
+        players[1].stack -= small_blind;
+        players[1].wager = small_blind;
         GameState {
             round: BettingRound::PREFLOP,
             pot: big_blind + small_blind,
             players,
-            current_player: 0,
+            current_player: 1,
             // 52 since its the first invalid card
             board: [52; 5],
             bets_settled: false
@@ -211,7 +232,7 @@ impl GameState {
     /// game_state = game_state.apply_action(&mut rng, Action::CHECK);
     /// assert_eq!(game_state.current_player_idx(), 1);
     /// ```
-    pub fn apply_action<R: Rng>(&self, rng: &mut R, action: Action) -> GameState {
+    pub fn apply_action(&self, action: Action) -> GameState {
         let mut next_state = self.clone();
         match action {
             Action::BET(bet_size) => {
@@ -270,21 +291,17 @@ impl GameState {
                 next_state.bets_settled = true;
             },
             Action::CHECK => {
-                // if current player is 0, next player
-                // else bets settled
-                if next_state.current_player == 0 {
-                    next_state.current_player = 1;
-                } else {
+                // last to act switchs pre flop
+                if next_state.round == BettingRound::PREFLOP && next_state.current_player == 0 {
                     next_state.bets_settled = true;
                 }
+                // if current player is last to act bets are even
+                if next_state.round != BettingRound::PREFLOP && next_state.current_player == 1 {
+                    next_state.bets_settled = true;
+                }
+                next_state.current_player = 1 - next_state.current_player;
             }
         }
-
-        // if betting is finished, advance to next round
-        if next_state.bets_settled && !next_state.is_game_over() {
-            next_state.next_round(rng);
-        }
-
         return next_state;
     }
     /// Deals cards in the current round
@@ -410,16 +427,16 @@ impl GameState {
                 return valid;
             },
             Action::CALL => {
-                // only valid if other player has bet
-                return self.other_player().wager != 0;
+                // only valid if other player has bet more than us
+                return self.other_player().wager > self.current_player().wager;
             },
             Action::FOLD => {
-                // only valid if other player has bet
-                return self.other_player().wager != 0;
+                // only valid if other player has bet more than us
+                return self.other_player().wager > self.current_player().wager;
             },
             Action::CHECK => {
                 // only valid if other player has not bet
-                return self.other_player().wager == 0;
+                return self.current_player().wager >= self.other_player().wager;
             }
         }
     }
@@ -468,6 +485,10 @@ impl GameState {
     /// Return reference to public cards
     pub const fn board(&self) -> &[u8; 5] {
         return &self.board;
+    }
+    /// Return bets settled
+    pub fn bets_settled(&self) -> bool {
+        return self.bets_settled;
     }
     /// Return a reference to the acting player state
     pub fn current_player(&self) -> &PlayerState {
