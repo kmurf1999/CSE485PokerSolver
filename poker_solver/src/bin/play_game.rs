@@ -1,7 +1,8 @@
 use poker_solver::agents::{Agent, HumanAgent, RandomAgent};
 use rand::thread_rng;
 use rand::rngs::ThreadRng;
-use poker_solver::state::{GameState, BettingRound};
+use poker_solver::state::GameState;
+use poker_solver::round::BettingRound;
 use poker_solver::card::{cards_to_str, score_hand};
 
 /// Simulates HUNL Texas Holdem game between two agents
@@ -31,7 +32,7 @@ impl GameEnvironment {
             // small blind is 5
 
             // create a state object using current stacks as initial stacks
-            let mut state = GameState::init_with_blinds(self.stacks, [10, 5]);
+            let mut state = GameState::init_with_blinds(self.stacks, [10, 5], None);
             // deal cards to both players
             state.deal_cards(&mut self.rng);
 
@@ -45,7 +46,8 @@ impl GameEnvironment {
                 println!("");
                 // if betting is finished, advance to next round
                 if state.bets_settled() && !state.is_game_over() {
-                    state.next_round(&mut self.rng);
+                    state = state.next_round();
+                    state.deal_cards(&mut self.rng);
                     println!("Dealing {}...", state.round());
                     println!("Board cards: [{}]", cards_to_str(state.board()));
                 }
@@ -67,7 +69,8 @@ impl GameEnvironment {
                 // deal cards until there are 5
                 while state.round() != BettingRound::RIVER {
                     // next round deals cards and increments round
-                    state.next_round(&mut self.rng);
+                    state = state.next_round();
+                    state.deal_cards(&mut self.rng);
                 }
                 println!("The board is [{}]", cards_to_str(state.board()));
                 println!("Player {} has [{}]", 0, cards_to_str(state.player(0).cards()));
