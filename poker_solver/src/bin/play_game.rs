@@ -1,9 +1,11 @@
+extern crate colored;
 use poker_solver::agents::{Agent, HumanAgent, RandomAgent};
 use rand::thread_rng;
 use rand::rngs::ThreadRng;
 use poker_solver::state::GameState;
 use poker_solver::round::BettingRound;
 use poker_solver::card::{cards_to_str, score_hand};
+use colored::*;
 
 /// Simulates HUNL Texas Holdem game between two agents
 pub struct GameEnvironment {
@@ -22,7 +24,7 @@ impl GameEnvironment {
         while !self.game_is_over() {
             // simulate a single hand
             println!("");
-            println!("Dealing new hand...");
+            println!("{}","Dealing new hand".bright_red());
             println!("Current stack sizes [{} : {}]", self.stacks[0], self.stacks[1]);
             println!("");
 
@@ -31,10 +33,17 @@ impl GameEnvironment {
             // big blind is 10
             // small blind is 5
 
+
+
+
+
             // create a state object using current stacks as initial stacks
             let mut state = GameState::init_with_blinds(self.stacks, [10, 5], None);
             // deal cards to both players
             state.deal_cards(&mut self.rng);
+
+
+
 
             while !state.is_game_over() {
                 let acting_player = usize::from(state.current_player_idx());
@@ -76,11 +85,17 @@ impl GameEnvironment {
                 println!("Player {} has [{}]", 0, cards_to_str(state.player(0).cards()));
                 println!("Player {} has [{}]", 1, cards_to_str(state.player(1).cards()));
 
+
+
                 // evaluate winner
                 // create public cards
                 let board = state.board();
                 let player_0_score = score_hand(board, state.player(0).cards());
                 let player_1_score = score_hand(board, state.player(1).cards());
+
+                //println!("Player 0 scored: {}", player_0_score);
+                //println!("Player 1 scored: {}", player_1_score);
+
                 if player_0_score == player_1_score {
                     println!("Tie!");
                     // tie
