@@ -1,79 +1,8 @@
 use rand::Rng;
-use std::fmt;
 use std::cmp::min;
 
-/// The Current Betting Round a Texas Holdem game is in
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum BettingRound {
-    PREFLOP,
-    FLOP,
-    TURN,
-    RIVER
-}
-
-
-impl fmt::Display for BettingRound {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let round_str = match self {
-            BettingRound::PREFLOP => "Preflop",
-            BettingRound::FLOP => "Flop",
-            BettingRound::TURN => "Turn",
-            BettingRound::RIVER => "River",
-        };
-        write!(f, "{}", round_str)
-    }
-}
-
-/// Represents a player action
-#[derive(Debug, Copy, Clone)]
-pub enum Action {
-    /// Bet size in chips
-    BET(u32),
-    /// Raise is a "by value"
-    /// meaning amount of chips past the call value
-    RAISE(u32),
-    /// Fold action
-    FOLD,
-    /// Call a bet or raise
-    CALL,
-    /// Check
-    CHECK,
-}
-
-/// For printing actions to terminal
-impl fmt::Display for Action {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        return match self {
-            Action::BET(size) => {
-                write!(f, "Bet {}", size)
-            },
-            Action::RAISE(size) => {
-                write!(f, "Raise {}", size)
-            },
-            Action::FOLD => {
-                write!(f, "Fold")
-            },
-            Action::CALL => {
-                write!(f, "Call")
-            },
-            Action::CHECK => {
-                write!(f, "Check")
-            }
-        }
-    }
-}
-
-
-/// List of available actions
-/// 
-/// Note: Bet and Raise sizes are invalid
-pub static ACTIONS: &'static [Action; 5] = &[
-    Action::BET(0),
-    Action::RAISE(0),
-    Action::FOLD,
-    Action::CALL,
-    Action::CHECK
-];
+use crate::action::{Action, ACTIONS};
+use crate::round::BettingRound;
 
 /// Represents the state of a single player in a HUNL Texas Holdem Game
 #[derive(Debug, Copy, Clone)]
@@ -159,9 +88,9 @@ impl GameState {
     /// let game_state = GameState::new(100, [10000, 10000]);
     /// assert_eq!(game_state.pot(), 100);
     /// ```
-    pub fn new(pot: u32, stacks: [u32; 2]) -> GameState {
+    pub fn new(pot: u32, stacks: [u32; 2], round: Option<BettingRound>) -> GameState {
         GameState {
-            round: BettingRound::PREFLOP,
+            round: round.unwrap_or_else(|| BettingRound::PREFLOP),
             pot,
             players: stacks.map(|s| PlayerState::new(s)),
             current_player: 0,
@@ -179,7 +108,7 @@ impl GameState {
     /// 
     /// * `stacks` The stack size of each player
     /// * `blidds` Big and small blind size, Big should come before small
-    pub fn init_with_blinds(stacks: [u32; 2], blinds: [u32; 2]) -> GameState {
+    pub fn init_with_blinds(stacks: [u32; 2], blinds: [u32; 2], round: Option<BettingRound>) -> GameState {
         let mut players = stacks.map(|s| PlayerState::new(s));
         let big_blind = min(stacks[0], blinds[0]);
         players[0].stack -= big_blind;
@@ -188,7 +117,7 @@ impl GameState {
         players[1].stack -= small_blind;
         players[1].wager = small_blind;
         GameState {
-            round: BettingRound::PREFLOP,
+            round: round.unwrap_or_else(|| BettingRound::PREFLOP),
             pot: big_blind + small_blind,
             players,
             current_player: 1,
@@ -410,20 +339,22 @@ impl GameState {
     /// # Arguments
     /// 
     /// * `action` A poker action
-    fn is_action_valid(&self, action: Action) -> bool {
+    pub fn is_action_valid(&self, action: Action) -> bool {
         match action {
-            Action::BET(_) => {
+            Action::BET(amt) => {
                 // only valid if other player has not bet
                 // and we have chips to bet
                 let valid = (self.other_player().wager == 0)
-                && (self.current_player().stack > 0);
+                && (self.current_player().stack > 0)
+                && (self.current_player().stack >= amt);
                 return valid;
             },
-            Action::RAISE(_) => {
+            Action::RAISE(amt) => {
                 // only valid if other player has bet
                 // and we have more money than their wager
                 let valid = (self.other_player().wager != 0)
-                && (self.current_player().stack > self.other_player().wager);
+                && (self.current_player().stack > self.other_player().wager)
+                && (self.current_player().stack >= amt);
                 return valid;
             },
             Action::CALL => {
@@ -507,32 +438,34 @@ impl GameState {
         return &mut self.players[usize::from(1 - self.current_player)];
     }
     /// Advance the game state to the next betting round
-    pub fn next_round<R: Rng>(&mut self, rng: &mut R) {
+    pub fn next_round(&self) -> GameState {
+        let mut next_state = self.clone();
         // advance round or do nothing if round is river
-        match self.round {
+        match next_state.round {
             BettingRound::PREFLOP => {
-                self.round = BettingRound::FLOP;
+                next_state.round = BettingRound::FLOP;
             },
             BettingRound::FLOP => {
-                self.round = BettingRound::TURN;
+                next_state.round = BettingRound::TURN;
             },
             BettingRound::TURN => {
-                self.round = BettingRound::RIVER;
+                next_state.round = BettingRound::RIVER;
             },
             BettingRound::RIVER => {
                 // game is over, do nothing
-                return;
+                return next_state;
             }
         }
-        self.bets_settled = false;
-        self.current_player = 0;
-        self.current_player_mut().wager = 0;
-        self.other_player_mut().wager = 0;
-        self.deal_cards(rng);
+        next_state.bets_settled = false;
+        next_state.current_player = 0;
+        next_state.current_player_mut().wager = 0;
+        next_state.other_player_mut().wager = 0;
+        
+        next_state
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // use super::*;
 }

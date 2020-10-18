@@ -1,4 +1,5 @@
-use crate::state::{Action, GameState};
+use crate::state::GameState;
+use crate::action::Action;
 use rand::thread_rng;
 use rand::Rng;
 use rand::rngs::ThreadRng;
@@ -201,5 +202,5 @@ impl HumanAgent {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // use super::*;
 }
