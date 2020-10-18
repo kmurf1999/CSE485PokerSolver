@@ -35,3 +35,12 @@ pub fn score_hand(board: &[Card], private_cards: &[Card]) -> u16 {
     });
     return evaluate(&hand);
 }
+
+pub fn player_hand_score(private_cards: &[Card]) -> u16 {
+    let mut hand = Hand::empty();
+    private_cards.into_iter().for_each(|c| {
+        hand += CARDS[usize::from(*c)];
+    });
+    return evaluate(&hand);
+}
+
