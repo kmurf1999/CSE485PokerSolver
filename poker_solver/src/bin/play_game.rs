@@ -33,17 +33,10 @@ impl GameEnvironment {
             // big blind is 10
             // small blind is 5
 
-
-
-
-
             // create a state object using current stacks as initial stacks
             let mut state = GameState::init_with_blinds(self.stacks, [10, 5], None);
             // deal cards to both players
             state.deal_cards(&mut self.rng);
-
-
-
 
             while !state.is_game_over() {
                 let acting_player = usize::from(state.current_player_idx());

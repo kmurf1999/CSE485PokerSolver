@@ -4,8 +4,6 @@ use std::cmp::min;
 use crate::action::{Action, ACTIONS};
 use crate::round::BettingRound;
 
-
-
 /// Represents the state of a single player in a HUNL Texas Holdem Game
 #[derive(Debug, Copy, Clone)]
 pub struct PlayerState {
@@ -341,20 +339,22 @@ impl GameState {
     /// # Arguments
     /// 
     /// * `action` A poker action
-    fn is_action_valid(&self, action: Action) -> bool {
+    pub fn is_action_valid(&self, action: Action) -> bool {
         match action {
-            Action::BET(_) => {
+            Action::BET(amt) => {
                 // only valid if other player has not bet
                 // and we have chips to bet
                 let valid = (self.other_player().wager == 0)
-                && (self.current_player().stack > 0);
+                && (self.current_player().stack > 0)
+                && (self.current_player().stack >= amt);
                 return valid;
             },
-            Action::RAISE(_) => {
+            Action::RAISE(amt) => {
                 // only valid if other player has bet
                 // and we have more money than their wager
                 let valid = (self.other_player().wager != 0)
-                && (self.current_player().stack > self.other_player().wager);
+                && (self.current_player().stack > self.other_player().wager)
+                && (self.current_player().stack >= amt);
                 return valid;
             },
             Action::CALL => {

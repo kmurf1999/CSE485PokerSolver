@@ -45,8 +45,8 @@ impl fmt::Display for Action {
 /// 
 /// Note: Bet and Raise sizes are invalid
 pub static ACTIONS: &'static [Action; 5] = &[
-    Action::BET(0),
-    Action::RAISE(0),
+    Action::BET(1),
+    Action::RAISE(1),
     Action::FOLD,
     Action::CALL,
     Action::CHECK

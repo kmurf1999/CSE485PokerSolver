@@ -20,3 +20,14 @@ impl fmt::Display for BettingRound {
         write!(f, "{}", round_str)
     }
 }
+
+impl From<BettingRound> for usize {
+    fn from(round: BettingRound) -> Self {
+        return match round {
+            BettingRound::PREFLOP => 0,
+            BettingRound::FLOP => 1,
+            BettingRound::TURN => 2,
+            BettingRound::RIVER => 3
+        }
+    }
+}

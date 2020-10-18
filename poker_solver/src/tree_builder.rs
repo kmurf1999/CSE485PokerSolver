@@ -7,14 +7,18 @@ use crate::action::Action;
 pub struct TreeBuilderOptions {
     /// value of the blinds
     /// if this option is set, `pot` is ignored
-    blinds: Option<[u32; 2]>,
+    pub blinds: Option<[u32; 2]>,
     /// The initial stack size of each player
-    stacks: [u32; 2],
+    pub stacks: [u32; 2],
     /// The initial pot size
-    pot: Option<u32>,
+    pub pot: Option<u32>,
     /// Initial betting round
     /// if this option is not set, it defaults to `BettingRound::PREFLOP`
-    round: Option<BettingRound>
+    pub round: Option<BettingRound>,
+    /// bet sizes expressed as a fraction of the pot
+    pub bet_sizes: [Vec<f64>; 4],
+    /// raise sizes as expressed as a fraction of the pot
+    pub raise_sizes: [Vec<f64>; 4]
 }
 
 /// A helper class to build a game tree
@@ -66,7 +70,27 @@ impl<'a> TreeBuilder<'a>{
         self.an_count += 1;
         // build each action
         state.valid_actions().iter().for_each(|action| {
-            self.build_action(node, state, *action);
+            if let Action::BET(_) = action {
+                // apply each bet size
+                self.options.bet_sizes[usize::from(state.round())].iter().for_each(|size| {
+                    let amt = (size * state.pot() as f64) as u32;
+                    let action_with_size = Action::BET(amt);
+                    if state.is_action_valid(action_with_size) {
+                        self.build_action(node, state, action_with_size);
+                    }
+                });
+            } else if let Action::RAISE(_) = action {
+                // apply each raise size
+                self.options.raise_sizes[usize::from(state.round())].iter().for_each(|size| {
+                    let amt = (size * state.pot() as f64) as u32;
+                    let action_with_size = Action::RAISE(amt);
+                    if state.is_action_valid(action_with_size) {
+                        self.build_action(node, state, action_with_size);
+                    }
+                });
+            } else {
+                self.build_action(node, state, *action);
+            }
         });
         node
     }

@@ -41,4 +41,7 @@ impl<T> Tree<T> {
     pub fn get_node_mut(&mut self, node_idx: usize) -> &mut Node<T> {
         &mut self.nodes[node_idx]
     }
+    pub fn get_node(&self, node_idx: usize) -> &Node<T> {
+        &self.nodes[node_idx]
+    }
 }
