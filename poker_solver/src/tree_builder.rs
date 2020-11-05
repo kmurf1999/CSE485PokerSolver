@@ -26,7 +26,7 @@ pub struct TreeBuilderOptions {
 pub struct TreeBuilder<'a> {
     options: &'a TreeBuilderOptions,
     tree: Tree<GameNode>,
-    an_count: usize
+    an_counts: [u32; 2]
 }
 
 impl<'a> TreeBuilder<'a>{
@@ -36,7 +36,7 @@ impl<'a> TreeBuilder<'a>{
         let mut builder = TreeBuilder {
             tree: Tree::<GameNode>::new(),
             options,
-            an_count: 0
+            an_counts: [0; 2]
         };
         // create initial state
         let initial_state = match options.blinds {
@@ -63,11 +63,12 @@ impl<'a> TreeBuilder<'a>{
     fn build_action_nodes(&mut self, parent: usize, state: GameState) -> usize {
         // TODO add actions and round index
         let node = self.tree.add_node(Some(parent), GameNode::Action {
-            index: self.an_count,
+            index: self.an_counts[usize::from(state.current_player_idx())],
+            player: state.current_player_idx(),
             actions: Vec::new()
         });
         // increment number of action nodes
-        self.an_count += 1;
+        self.an_counts[usize::from(state.current_player_idx())] += 1;
         // build each action
         state.valid_actions().iter().for_each(|action| {
             if let Action::BET(_) = action {
@@ -112,7 +113,7 @@ impl<'a> TreeBuilder<'a>{
         // link new node to tree
         self.tree.get_node_mut(parent).add_child(child);
         // add action
-        if let GameNode::Action { index: _, actions } = &mut self.tree.get_node_mut(parent).data {
+        if let GameNode::Action { index: _, actions, player } = &mut self.tree.get_node_mut(parent).data {
             actions.push(action);
         }
     }

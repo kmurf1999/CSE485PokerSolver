@@ -1,133 +1,193 @@
 extern crate colored;
-use poker_solver::agents::{Agent, HumanAgent, RandomAgent};
-use rand::thread_rng;
-use rand::rngs::ThreadRng;
-use poker_solver::state::GameState;
-use poker_solver::round::BettingRound;
-use poker_solver::card::{cards_to_str, score_hand};
-use colored::*;
+extern crate async_std;
+extern crate serde;
+extern crate serde_json;
+extern crate futures;
 
-/// Simulates HUNL Texas Holdem game between two agents
-pub struct GameEnvironment {
-    /// Represents the two players
-    agents: [Box<dyn Agent>; 2],
-    /// update stack size for each player after every hand
-    stacks: [u32; 2],
-    /// A seeded rng object for generating random numbers
-    rng: ThreadRng
+// use poker_solver::agents::{HumanAgent, RandomAgent};
+// use poker_solver::game_environment::GameEnvironment;
+
+// use rand::thread_rng;
+use serde::{Serialize, Deserialize};
+use async_std::{
+    io::BufReader,
+    net::{TcpListener, TcpStream, ToSocketAddrs},
+    prelude::*,
+    task,
+};
+use futures::channel::mpsc;
+use futures::sink::SinkExt;
+use std::{
+    collections::hash_map::{HashMap, Entry},
+    sync::Arc,
+};
+
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+type Sender<T> = mpsc::UnboundedSender<T>;
+type Receiver<T> = mpsc::UnboundedReceiver<T>;
+
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+pub enum GameEvent {
+    StartGame,
+    EndGame,
+    StartHand,
+    EndHand,
 }
 
-impl GameEnvironment {
-    /// Starts and runs poker game until completion
-    pub fn play(&mut self) {
-        // while game isn't over
-        while !self.game_is_over() {
-            // simulate a single hand
-            println!("");
-            println!("{}","Dealing new hand".bright_red());
-            println!("Current stack sizes [{} : {}]", self.stacks[0], self.stacks[1]);
-            println!("");
+// #[derive(Debug)]
+// struct Agent {
+//     reader: io::BufReader<TcpStream>,
+//     writer: io::LineWriter<TcpStream>,
+//     player: usize
+// }
 
-            println!("Posting blinds & Dealing cards");
-            println!("");
-            // big blind is 10
-            // small blind is 5
-
-            // create a state object using current stacks as initial stacks
-            let mut state = GameState::init_with_blinds(self.stacks, [10, 5], None);
-            // deal cards to both players
-            state.deal_cards(&mut self.rng);
-
-            while !state.is_game_over() {
-                let acting_player = usize::from(state.current_player_idx());
-                let action = self.agents[acting_player].get_action(&state);
-                // print to terminal
-                println!("Player {} has chosen to {}", acting_player, action);
-                state = state.apply_action(action);
-                println!("Stacks: [{}, {}],  Pot: {}", state.player(0).stack(), state.player(1).stack(), state.pot());
-                println!("");
-                // if betting is finished, advance to next round
-                if state.bets_settled() && !state.is_game_over() {
-                    state = state.next_round();
-                    state.deal_cards(&mut self.rng);
-                    println!("Dealing {}...", state.round());
-                    println!("Board cards: [{}]", cards_to_str(state.board()));
-                }
-            }
-
-            // final pot value
-            let pot = state.pot();
-            // copy stack values after hand
-            // (before we award chips)
-            self.stacks[0] = state.player(0).stack();
-            self.stacks[1] = state.player(1).stack();
-
-            if let Some(player_fold) = state.player_folded() {
-                println!("Player {} has folded.  Player {} wins {}", player_fold, 1 - player_fold, pot);
-                // handle fold
-                // award chips to winner
-                self.stacks[1 - usize::from(player_fold)] += pot;
-            } else {
-                // deal cards until there are 5
-                while state.round() != BettingRound::RIVER {
-                    // next round deals cards and increments round
-                    state = state.next_round();
-                    state.deal_cards(&mut self.rng);
-                }
-                println!("The board is [{}]", cards_to_str(state.board()));
-                println!("Player {} has [{}]", 0, cards_to_str(state.player(0).cards()));
-                println!("Player {} has [{}]", 1, cards_to_str(state.player(1).cards()));
+// impl Agent {
+//     pub fn start_agent(player: usize, addr: SocketAddr) -> thread::JoinHandle<()> {
+//         thread::spawn(move || {
+//             let stream = TcpStream::connect(addr).unwrap();
+//             let mut agent = Agent {
+//                 writer: io::LineWriter::new(stream.try_clone().unwrap()),
+//                 reader: io::BufReader::new(stream),
+//                 player
+//             };
+//         })
+//     }
+// }
 
 
+// main
+fn run() -> Result<()> {
+    task::block_on(accept_loop("127.0.0.1:8080"))
+}
 
-                // evaluate winner
-                // create public cards
-                let board = state.board();
-                let player_0_score = score_hand(board, state.player(0).cards());
-                let player_1_score = score_hand(board, state.player(1).cards());
-
-                //println!("Player 0 scored: {}", player_0_score);
-                //println!("Player 1 scored: {}", player_1_score);
-
-                if player_0_score == player_1_score {
-                    println!("Tie!");
-                    // tie
-                    self.stacks[0] += pot / 2;
-                    self.stacks[1] += pot / 2;
-                } else if player_0_score > player_1_score {
-                    println!("Player 0 wins {}", pot);
-                    // player 0 win
-                    self.stacks[0] += pot;
-                } else {
-                    println!("Player 1 wins {}", pot);
-                    // player 1 win
-                    self.stacks[1] += pot;
-                }
-            }
-
-            // So each hand players take turn going first
-            self.stacks.reverse();
-            self.agents.reverse();
+fn spawn_and_log_error<F>(fut: F) -> task::JoinHandle<()>
+where
+    F: Future<Output = Result<()>> + Send + 'static,
+{
+    task::spawn(async move {
+        if let Err(e) = fut.await {
+            eprintln!("{}", e)
         }
-
-        println!("Game over");
-    }
-    /// Return true is game has finished
-    /// 
-    /// This checks to see if both players have money
-    fn game_is_over(&self) -> bool {
-        return !(self.stacks[0] > 0 && self.stacks[1] > 0);
-    }
+    })
 }
 
-fn main() {
-    let mut game = GameEnvironment {
-        agents: [
-            Box::new(HumanAgent::new()),
-            Box::new(RandomAgent::new()),
-        ],
-        rng: thread_rng(),
-        stacks: [10000; 2]
+async fn accept_loop(addr: impl ToSocketAddrs) -> Result<()> {
+    let listener = TcpListener::bind(addr).await?;
+
+    let (broker_sender, broker_receiver) = mpsc::unbounded(); // 1
+    let _broker_handle = task::spawn(broker_loop(broker_receiver));
+    let mut incoming = listener.incoming();
+    while let Some(stream) = incoming.next().await {
+        let stream = stream?;
+        println!("Accepting from: {}", stream.peer_addr()?);
+        spawn_and_log_error(connection_loop(broker_sender.clone(), stream));
+    }
+    Ok(())
+}
+
+async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result<()> {
+    let stream = Arc::new(stream); // 2
+    let reader = BufReader::new(&*stream);
+    let mut lines = reader.lines();
+
+    let name = match lines.next().await {
+        None => Err("peer disconnected immediately")?,
+        Some(line) => line?,
     };
-    game.play();
+    broker.send(Event::NewPeer { name: name.clone(), stream: Arc::clone(&stream) }).await // 3
+        .unwrap();
+
+    while let Some(line) = lines.next().await {
+        let line = line?;
+        let (dest, msg) = match line.find(':') {
+            None => continue,
+            Some(idx) => (&line[..idx], line[idx + 1 ..].trim()),
+        };
+        let dest: Vec<String> = dest.split(',').map(|name| name.trim().to_string()).collect();
+        let msg: String = msg.to_string();
+
+        broker.send(Event::Message { // 4
+            from: name.clone(),
+            to: dest,
+            msg,
+        }).await.unwrap();
+    }
+    Ok(())
+}
+
+async fn connection_writer_loop(
+    mut messages: Receiver<String>,
+    stream: Arc<TcpStream>,
+) -> Result<()> {
+    let mut stream = &*stream;
+    while let Some(msg) = messages.next().await {
+        stream.write_all(msg.as_bytes()).await?;
+    }
+    Ok(())
+}
+
+#[derive(Debug)]
+enum Event {
+    NewPeer {
+        name: String,
+        stream: Arc<TcpStream>,
+    },
+    Message {
+        from: String,
+        to: Vec<String>,
+        msg: String,
+    },
+}
+
+async fn broker_loop(mut events: Receiver<Event>) -> Result<()> {
+    let mut peers: HashMap<String, Sender<String>> = HashMap::new();
+
+    while let Some(event) = events.next().await {
+        match event {
+            Event::Message { from, to, msg } => {
+                for addr in to {
+                    if let Some(peer) = peers.get_mut(&addr) {
+                        let msg = format!("from {}: {}\n", from, msg);
+                        peer.send(msg).await?
+                    }
+                }
+            }
+            Event::NewPeer { name, stream} => {
+                match peers.entry(name) {
+                    Entry::Occupied(..) => (),
+                    Entry::Vacant(entry) => {
+                        let (client_sender, client_receiver) = mpsc::unbounded();
+                        entry.insert(client_sender); // 4
+                        spawn_and_log_error(connection_writer_loop(client_receiver, stream)); // 5
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn main() -> Result<()> {
+    // let mut game = GameEnvironment {
+    //     agents: [
+    //         Box::new(HumanAgent::new()),
+    //         Box::new(RandomAgent::new()),
+    //     ],
+    //     rng: thread_rng(),
+    //     stacks: [10000; 2]
+    // };
+    // game.play();
+    task::block_on(accept_loop("127.0.0.1:8080"))
+
+    // create game channels
+
+    // create agents
+    // let agents = vec![
+    //     Agent::start_agent(0, addr),
+    //     Agent::start_agent(1, addr)
+    // ];
+    // join threads and stop server
+    // for agent in agents {
+    //     let _ = agent.join();
+    // }
 }

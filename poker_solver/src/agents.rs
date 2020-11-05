@@ -85,19 +85,16 @@ impl Agent for HumanAgent {
         println!("The board cards are: [{}]", cards_to_str(state.board()).to_string().bright_yellow());
         println!("{} cards are: [{}]", "Your".red(), cards_to_str(state.current_player().cards()).to_string().bright_yellow());
 
-        //Hand Strength -> Human play
-        //Suggestion to Play this hand or not.
-        //Will be used for The RandomAgent brain in the future
-        let player_strength = player_hand_score(state.current_player().cards());
+        // Hand Strength -> Human play
+        // Suggestion to Play this hand or not.
+        // Will be used for The RandomAgent brain in the future
+        // let player_strength = player_hand_score(state.current_player().cards());
 
-
-
-
-        if player_strength >= 4399 {
-            println!("{} ", "You have strong cards, Call it !".red())
-        } else {
-            println!("{} ", "You have weak cards, there might be a risk !".red())
-        }
+        // if player_strength >= 4399 {
+        //     println!("{} ", "You have strong cards, Call it !".red())
+        // } else {
+        //     println!("{} ", "You have weak cards, there might be a risk !".red())
+        // }
 
         //if state.round() == BettingRound::FLOP {
         //    println!("Board strength: {:?}", board_strength.to_string());

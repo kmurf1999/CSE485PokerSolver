@@ -2,6 +2,7 @@ use std::iter::repeat;
 use poker_solver::tree_builder::{TreeBuilder, TreeBuilderOptions};
 use poker_solver::tree::{Tree};
 use poker_solver::game_node::GameNode;
+use poker_solver::round::BettingRound;
 
 /// Recursivly prints a node on the game tree
 fn print_node(tree: &Tree<GameNode>, node: usize, depth: usize) {
@@ -19,7 +20,7 @@ fn print_node(tree: &Tree<GameNode>, node: usize, depth: usize) {
         GameNode::Terminal { ttype, value, last_to_act: _ } => {
             println!("{}{} - value: {}", spaces, ttype, value);
         },
-        GameNode::Action { actions, index } => {
+        GameNode::Action { actions, index, player } => {
             for (i, action) in actions.iter().enumerate() {
                 println!("{}{}", spaces, action);
                 print_node(tree, n.children[i], depth + 1);
@@ -30,10 +31,10 @@ fn print_node(tree: &Tree<GameNode>, node: usize, depth: usize) {
 
 fn main() {
     let options = TreeBuilderOptions {
-        blinds: Some([10, 5]),
+        blinds: None,
         stacks: [1000, 1000],
-        pot: None,
-        round: None,
+        pot: Some(100),
+        round: Some(BettingRound::RIVER),
         bet_sizes: [
             vec![ 1.0 ],
             vec![ 1.0 ],
@@ -41,10 +42,10 @@ fn main() {
             vec![ 1.0 ]
         ],
         raise_sizes: [
-            vec![],
-            vec![],
-            vec![],
-            vec![]
+            vec![ ],
+            vec![ ],
+            vec![ ],
+            vec![ 1.0 ]
         ]
     };
     let tree = TreeBuilder::build(&options);
