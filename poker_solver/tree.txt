@@ -1,0 +1,198 @@
+Deal private cards
+  Raise 15
+    Raise 35
+      Raise 85
+        Raise 205
+          Raise 495
+            Fold
+              Fold - value: 700
+            Call
+              Deal public cards
+                Check
+                  Check
+                    Showdown - value: 1195
+          Fold
+            Fold - value: 290
+          Call
+            Deal public cards
+              Bet 495
+                Fold
+                  Fold - value: 495
+                Call
+                  Showdown - value: 1485
+              Check
+                Bet 495
+                  Fold
+                    Fold - value: 495
+                  Call
+                    Showdown - value: 1485
+                Check
+                  Showdown - value: 495
+        Fold
+          Fold - value: 120
+        Call
+          Deal public cards
+            Bet 205
+              Raise 410
+                Fold
+                  Fold - value: 615
+                Call
+                  Showdown - value: 1435
+              Fold
+                Fold - value: 205
+              Call
+                Showdown - value: 615
+            Check
+              Bet 205
+                Raise 410
+                  Fold
+                    Fold - value: 615
+                  Call
+                    Showdown - value: 1435
+                Fold
+                  Fold - value: 205
+                Call
+                  Showdown - value: 615
+              Check
+                Showdown - value: 205
+      Fold
+        Fold - value: 50
+      Call
+        Deal public cards
+          Bet 85
+            Raise 170
+              Raise 425
+                Fold
+                  Fold - value: 595
+                Call
+                  Showdown - value: 1445
+              Fold
+                Fold - value: 255
+              Call
+                Showdown - value: 595
+            Fold
+              Fold - value: 85
+            Call
+              Showdown - value: 255
+          Check
+            Bet 85
+              Raise 170
+                Raise 425
+                  Fold
+                    Fold - value: 595
+                  Call
+                    Showdown - value: 1445
+                Fold
+                  Fold - value: 255
+                Call
+                  Showdown - value: 595
+              Fold
+                Fold - value: 85
+              Call
+                Showdown - value: 255
+            Check
+              Showdown - value: 85
+    Fold
+      Fold - value: 20
+    Call
+      Deal public cards
+        Bet 35
+          Raise 70
+            Raise 175
+              Raise 420
+                Fold
+                  Fold - value: 595
+                Call
+                  Showdown - value: 1435
+              Fold
+                Fold - value: 245
+              Call
+                Showdown - value: 595
+            Fold
+              Fold - value: 105
+            Call
+              Showdown - value: 245
+          Fold
+            Fold - value: 35
+          Call
+            Showdown - value: 105
+        Check
+          Bet 35
+            Raise 70
+              Raise 175
+                Raise 420
+                  Fold
+                    Fold - value: 595
+                  Call
+                    Showdown - value: 1435
+                Fold
+                  Fold - value: 245
+                Call
+                  Showdown - value: 595
+              Fold
+                Fold - value: 105
+              Call
+                Showdown - value: 245
+            Fold
+              Fold - value: 35
+            Call
+              Showdown - value: 105
+          Check
+            Showdown - value: 35
+  Fold
+    Fold - value: 10
+  Call
+    Deal public cards
+      Bet 15
+        Raise 30
+          Raise 75
+            Raise 180
+              Raise 435
+                Fold
+                  Fold - value: 615
+                Call
+                  Showdown - value: 1485
+              Fold
+                Fold - value: 255
+              Call
+                Showdown - value: 615
+            Fold
+              Fold - value: 105
+            Call
+              Showdown - value: 255
+          Fold
+            Fold - value: 45
+          Call
+            Showdown - value: 105
+        Fold
+          Fold - value: 15
+        Call
+          Showdown - value: 45
+      Check
+        Bet 15
+          Raise 30
+            Raise 75
+              Raise 180
+                Raise 435
+                  Fold
+                    Fold - value: 615
+                  Call
+                    Showdown - value: 1485
+                Fold
+                  Fold - value: 255
+                Call
+                  Showdown - value: 615
+              Fold
+                Fold - value: 105
+              Call
+                Showdown - value: 255
+            Fold
+              Fold - value: 45
+            Call
+              Showdown - value: 105
+          Fold
+            Fold - value: 15
+          Call
+            Showdown - value: 45
+        Check
+          Showdown - value: 15

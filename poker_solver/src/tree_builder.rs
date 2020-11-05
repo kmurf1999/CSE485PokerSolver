@@ -1,8 +1,8 @@
-use crate::tree::Tree;
-use crate::state::GameState;
+use crate::action::Action;
 use crate::game_node::{GameNode, TerminalType};
 use crate::round::BettingRound;
-use crate::action::Action;
+use crate::state::GameState;
+use crate::tree::Tree;
 
 pub struct TreeBuilderOptions {
     /// value of the blinds
@@ -18,7 +18,7 @@ pub struct TreeBuilderOptions {
     /// bet sizes expressed as a fraction of the pot
     pub bet_sizes: [Vec<f64>; 4],
     /// raise sizes as expressed as a fraction of the pot
-    pub raise_sizes: [Vec<f64>; 4]
+    pub raise_sizes: [Vec<f64>; 4],
 }
 
 /// A helper class to build a game tree
@@ -26,23 +26,21 @@ pub struct TreeBuilderOptions {
 pub struct TreeBuilder<'a> {
     options: &'a TreeBuilderOptions,
     tree: Tree<GameNode>,
-    an_count: usize
+    an_counts: [u32; 2],
 }
 
-impl<'a> TreeBuilder<'a>{
+impl<'a> TreeBuilder<'a> {
     /// Build a tree using initial options
     /// and return tree
     pub fn build(options: &'a TreeBuilderOptions) -> Tree<GameNode> {
         let mut builder = TreeBuilder {
             tree: Tree::<GameNode>::new(),
             options,
-            an_count: 0
+            an_counts: [0; 2],
         };
         // create initial state
         let initial_state = match options.blinds {
-            Some(blinds) => {
-                GameState::init_with_blinds(options.stacks, blinds, options.round)
-            },
+            Some(blinds) => GameState::init_with_blinds(options.stacks, blinds, options.round),
             None => {
                 let pot = options.pot.unwrap();
                 GameState::new(pot, options.stacks, options.round)
@@ -62,32 +60,40 @@ impl<'a> TreeBuilder<'a>{
     /// Build action nodes recursivily and return index of action node
     fn build_action_nodes(&mut self, parent: usize, state: GameState) -> usize {
         // TODO add actions and round index
-        let node = self.tree.add_node(Some(parent), GameNode::Action {
-            index: self.an_count,
-            actions: Vec::new()
-        });
+        let node = self.tree.add_node(
+            Some(parent),
+            GameNode::Action {
+                index: self.an_counts[usize::from(state.current_player_idx())],
+                player: state.current_player_idx(),
+                actions: Vec::new(),
+            },
+        );
         // increment number of action nodes
-        self.an_count += 1;
+        self.an_counts[usize::from(state.current_player_idx())] += 1;
         // build each action
         state.valid_actions().iter().for_each(|action| {
             if let Action::BET(_) = action {
                 // apply each bet size
-                self.options.bet_sizes[usize::from(state.round())].iter().for_each(|size| {
-                    let amt = (size * state.pot() as f64) as u32;
-                    let action_with_size = Action::BET(amt);
-                    if state.is_action_valid(action_with_size) {
-                        self.build_action(node, state, action_with_size);
-                    }
-                });
+                self.options.bet_sizes[usize::from(state.round())]
+                    .iter()
+                    .for_each(|size| {
+                        let amt = (size * state.pot() as f64) as u32;
+                        let action_with_size = Action::BET(amt);
+                        if state.is_action_valid(action_with_size) {
+                            self.build_action(node, state, action_with_size);
+                        }
+                    });
             } else if let Action::RAISE(_) = action {
                 // apply each raise size
-                self.options.raise_sizes[usize::from(state.round())].iter().for_each(|size| {
-                    let amt = (size * state.pot() as f64) as u32;
-                    let action_with_size = Action::RAISE(amt);
-                    if state.is_action_valid(action_with_size) {
-                        self.build_action(node, state, action_with_size);
-                    }
-                });
+                self.options.raise_sizes[usize::from(state.round())]
+                    .iter()
+                    .for_each(|size| {
+                        let amt = (size * state.pot() as f64) as u32;
+                        let action_with_size = Action::RAISE(amt);
+                        if state.is_action_valid(action_with_size) {
+                            self.build_action(node, state, action_with_size);
+                        }
+                    });
             } else {
                 self.build_action(node, state, *action);
             }
@@ -112,7 +118,12 @@ impl<'a> TreeBuilder<'a>{
         // link new node to tree
         self.tree.get_node_mut(parent).add_child(child);
         // add action
-        if let GameNode::Action { index: _, actions } = &mut self.tree.get_node_mut(parent).data {
+        if let GameNode::Action {
+            index: _,
+            actions,
+            player,
+        } = &mut self.tree.get_node_mut(parent).data
+        {
             actions.push(action);
         }
     }
@@ -127,23 +138,32 @@ impl<'a> TreeBuilder<'a>{
     fn build_terminal(&mut self, parent: usize, state: GameState) -> usize {
         let node;
         if let Some(folded) = state.player_folded() {
-            node = self.tree.add_node(Some(parent), GameNode::Terminal {
-                ttype: TerminalType::Fold,
-                last_to_act: folded,
-                value: state.pot()
-            });
+            node = self.tree.add_node(
+                Some(parent),
+                GameNode::Terminal {
+                    ttype: TerminalType::Fold,
+                    last_to_act: folded,
+                    value: state.pot(),
+                },
+            );
         } else if let Some(_) = state.player_all_in() {
-            node = self.tree.add_node(Some(parent), GameNode::Terminal {
-                ttype: TerminalType::AllIn,
-                last_to_act: 0,
-                value: state.pot()
-            }); 
+            node = self.tree.add_node(
+                Some(parent),
+                GameNode::Terminal {
+                    ttype: TerminalType::AllIn,
+                    last_to_act: 0,
+                    value: state.pot(),
+                },
+            );
         } else {
-            node = self.tree.add_node(Some(parent), GameNode::Terminal {
-                ttype: TerminalType::Showdown,
-                last_to_act: 0,
-                value: state.pot()
-            }); 
+            node = self.tree.add_node(
+                Some(parent),
+                GameNode::Terminal {
+                    ttype: TerminalType::Showdown,
+                    last_to_act: 0,
+                    value: state.pot(),
+                },
+            );
         }
         node
     }

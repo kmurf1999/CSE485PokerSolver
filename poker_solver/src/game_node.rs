@@ -12,7 +12,8 @@ pub enum GameNode {
     PrivateChance,
     PublicChance,
     Action {
-        index: usize,
+        index: u32,
+        player: u8,
         actions: Vec<Action>
     },
     Terminal {

@@ -1,18 +1,18 @@
 /// Tree object in rust
-/// 
+///
 /// Nodes are stored in a central arena
 /// and are used to iterate using node indices instead of pointers
 pub struct Tree<T> {
-    nodes: Vec<Node<T>>
+    nodes: Vec<Node<T>>,
 }
 
 /// Node object for the tree
-/// 
+///
 /// Children is a list of node indices instead of pointers
 pub struct Node<T> {
     pub data: T,
     pub parent: Option<usize>,
-    pub children: Vec<usize>
+    pub children: Vec<usize>,
 }
 
 impl<T> Node<T> {
@@ -24,9 +24,7 @@ impl<T> Node<T> {
 impl<T> Tree<T> {
     /// Create an empty tree
     pub fn new() -> Tree<T> {
-        Tree {
-            nodes: Vec::new()
-        }
+        Tree { nodes: Vec::new() }
     }
     /// Add a new node into the tree
     pub fn add_node(&mut self, parent: Option<usize>, data: T) -> usize {
@@ -34,7 +32,7 @@ impl<T> Tree<T> {
         self.nodes.push(Node {
             parent,
             children: Vec::new(),
-            data
+            data,
         });
         return next_index;
     }
