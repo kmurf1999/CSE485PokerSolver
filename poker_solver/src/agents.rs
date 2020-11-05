@@ -1,17 +1,17 @@
-use crate::state::GameState;
 use crate::action::Action;
-use rand::thread_rng;
-use rand::Rng;
+use crate::state::GameState;
 use rand::rngs::ThreadRng;
 use rand::seq::SliceRandom;
+use rand::thread_rng;
+use rand::Rng;
 use std::io::{self, BufRead};
 
 use crate::card::{cards_to_str, player_hand_score};
 use colored::Colorize;
 
 /// Entity that employs a strategy to play poker
-/// 
-/// An agent subscribes to a poker game environment 
+///
+/// An agent subscribes to a poker game environment
 /// and chooses from available actions until the game is done
 pub trait Agent {
     /// Selects a valid action to play
@@ -19,11 +19,11 @@ pub trait Agent {
 }
 
 /// RandomAgent is an agent with a random strategy profile
-/// 
+///
 /// It selects from available actions at random
 #[derive(Debug)]
 pub struct RandomAgent {
-    rng: ThreadRng
+    rng: ThreadRng,
 }
 
 impl Agent for RandomAgent {
@@ -32,9 +32,7 @@ impl Agent for RandomAgent {
         // If action is BET or RAISE it ensures that
         // the amount is also valid
         let actions = state.valid_actions();
-        let chosen_action = actions.choose(&mut self.rng)
-            .unwrap()
-            .to_owned();
+        let chosen_action = actions.choose(&mut self.rng).unwrap().to_owned();
 
         if let Action::BET(_) = chosen_action {
             let max_bet = state.current_player().stack();
@@ -43,7 +41,8 @@ impl Agent for RandomAgent {
         }
 
         if let Action::RAISE(_) = chosen_action {
-            let max_raise = state.current_player().stack() - (state.other_player().wager() - state.current_player().wager());
+            let max_raise = state.current_player().stack()
+                - (state.other_player().wager() - state.current_player().wager());
             let raise_size = self.rng.gen_range(1, max_raise);
             return Action::RAISE(raise_size);
         }
@@ -54,20 +53,16 @@ impl Agent for RandomAgent {
 
 impl RandomAgent {
     pub fn new() -> RandomAgent {
-        RandomAgent {
-            rng: thread_rng()
-        }
+        RandomAgent { rng: thread_rng() }
     }
 }
 
 /// Human is an Agent that is controlled by a human
-/// 
+///
 /// It takes inputs from STDIN
 /// retrys until input is valid
 #[derive(Debug)]
-pub struct HumanAgent {
-
-}
+pub struct HumanAgent {}
 
 impl Agent for HumanAgent {
     /// Get valid action from STDIN
@@ -80,10 +75,25 @@ impl Agent for HumanAgent {
 
         println!("");
         println!("{}", "Please select an action.".bright_cyan());
-        println!("{} {} {} {}", "You have".bright_yellow(), state.current_player().stack().to_string().red(), "chips, your opponent has".bright_yellow(), state.other_player().stack().to_string().red());
+        println!(
+            "{} {} {} {}",
+            "You have".bright_yellow(),
+            state.current_player().stack().to_string().red(),
+            "chips, your opponent has".bright_yellow(),
+            state.other_player().stack().to_string().red()
+        );
         println!("The pot is: {}", state.pot().to_string().green());
-        println!("The board cards are: [{}]", cards_to_str(state.board()).to_string().bright_yellow());
-        println!("{} cards are: [{}]", "Your".red(), cards_to_str(state.current_player().cards()).to_string().bright_yellow());
+        println!(
+            "The board cards are: [{}]",
+            cards_to_str(state.board()).to_string().bright_yellow()
+        );
+        println!(
+            "{} cards are: [{}]",
+            "Your".red(),
+            cards_to_str(state.current_player().cards())
+                .to_string()
+                .bright_yellow()
+        );
 
         // Hand Strength -> Human play
         // Suggestion to Play this hand or not.
@@ -103,21 +113,27 @@ impl Agent for HumanAgent {
         while !is_action_valid {
             is_action_valid = true;
             // List Valid actions
-            actions.iter().enumerate().for_each(|(i, a)| {
-                match a {
-                    Action::BET(_) => println!("{}: {}", i.to_string().red(), "Bet".bright_cyan()),
-                    Action::RAISE(_) => println!("{}: {}", i.to_string().red(), "Raise".bright_cyan()),
-                    Action::CALL => {
-                        let call_amt = state.other_player().wager() - state.current_player().wager();
-                        println!("{}: {} {}", i.to_string().red(), "Call".bright_cyan(),call_amt.to_string().bright_yellow());
-                    },
-                    Action::FOLD => println!("{}: {}", i.to_string().red(), "Fold".bright_cyan()),
-                    Action::CHECK => println!("{}: {}", i.to_string().red(), "Check".bright_cyan()),
+            actions.iter().enumerate().for_each(|(i, a)| match a {
+                Action::BET(_) => println!("{}: {}", i.to_string().red(), "Bet".bright_cyan()),
+                Action::RAISE(_) => println!("{}: {}", i.to_string().red(), "Raise".bright_cyan()),
+                Action::CALL => {
+                    let call_amt = state.other_player().wager() - state.current_player().wager();
+                    println!(
+                        "{}: {} {}",
+                        i.to_string().red(),
+                        "Call".bright_cyan(),
+                        call_amt.to_string().bright_yellow()
+                    );
                 }
+                Action::FOLD => println!("{}: {}", i.to_string().red(), "Fold".bright_cyan()),
+                Action::CHECK => println!("{}: {}", i.to_string().red(), "Check".bright_cyan()),
             });
             // get input
             let mut input = String::new();
-            stdin.lock().read_line(&mut input).expect("could not read line");
+            stdin
+                .lock()
+                .read_line(&mut input)
+                .expect("could not read line");
             // ensure input is a number in correct range
             let action_index = match input.trim().parse::<usize>() {
                 Ok(num) => {
@@ -127,7 +143,7 @@ impl Agent for HumanAgent {
                         continue;
                     }
                     num
-                },
+                }
                 Err(_) => {
                     is_action_valid = false;
                     println!("Input must be a number. Retrying.");
@@ -150,7 +166,7 @@ impl Agent for HumanAgent {
                         if is_action_valid {
                             return Action::BET(num);
                         }
-                    },
+                    }
                     Err(_) => {
                         is_action_valid = false;
                         println!("Bet size must be a floating point number. Retrying.");
@@ -159,9 +175,13 @@ impl Agent for HumanAgent {
                 };
             }
             if let Action::RAISE(_) = actions[action_index] {
-                let max_raise = state.current_player().stack() - (state.other_player().wager() - state.current_player().wager());
+                let max_raise = state.current_player().stack()
+                    - (state.other_player().wager() - state.current_player().wager());
                 let mut raise_s = String::new();
-                println!("Please input a raise size from ({},{}) over opponent raise: ", 1, max_raise);
+                println!(
+                    "Please input a raise size from ({},{}) over opponent raise: ",
+                    1, max_raise
+                );
                 stdin.lock().read_line(&mut raise_s).unwrap();
                 match raise_s.trim().parse::<u32>() {
                     Ok(num) => {
@@ -173,7 +193,7 @@ impl Agent for HumanAgent {
                         if is_action_valid {
                             return Action::RAISE(num);
                         }
-                    },
+                    }
                     Err(_) => {
                         is_action_valid = false;
                         println!("Raise size must be a number greater than 0. Retrying.");

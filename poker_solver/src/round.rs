@@ -1,12 +1,13 @@
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// The Current Betting Round a Texas Holdem game is in
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub enum BettingRound {
     PREFLOP,
     FLOP,
     TURN,
-    RIVER
+    RIVER,
 }
 
 impl fmt::Display for BettingRound {
@@ -27,7 +28,7 @@ impl From<BettingRound> for usize {
             BettingRound::PREFLOP => 0,
             BettingRound::FLOP => 1,
             BettingRound::TURN => 2,
-            BettingRound::RIVER => 3
-        }
+            BettingRound::RIVER => 3,
+        };
     }
 }

@@ -1,4 +1,5 @@
-use rand::Rng;
+use rand::prelude::*;
+use rand::thread_rng;
 use std::cmp::min;
 
 use crate::action::{Action, ACTIONS};
@@ -15,11 +16,11 @@ pub struct PlayerState {
     /// card is n in 0..52 where n = 4 * rank + suit
     cards: [u8; 2],
     /// Has the player folded
-    has_folded: bool
+    has_folded: bool,
 }
 
 /// Represents the current state of a HUNL Texas Holdem Game
-/// 
+///
 /// State is small and immutable
 /// This means that functions which update state operate on a copy of itself
 #[derive(Debug, Copy, Clone)]
@@ -36,14 +37,14 @@ pub struct GameState {
     /// card is n in 0..52 where n = 4 * rank + suit
     board: [u8; 5],
     /// Has betting finished for the current round
-    bets_settled: bool
+    bets_settled: bool,
 }
 
 impl PlayerState {
     /// Creates a player state with an initial stack size
-    /// 
+    ///
     /// # Arguements
-    /// 
+    ///
     /// * `stack` - The stacking stack size in chips
     pub fn new(stack: u32) -> PlayerState {
         PlayerState {
@@ -51,7 +52,7 @@ impl PlayerState {
             wager: 0,
             // 52 since its the first invalid card index
             cards: [52; 2],
-            has_folded: false
+            has_folded: false,
         }
     }
     /// Return stack size
@@ -75,14 +76,14 @@ impl PlayerState {
 impl GameState {
     /// Create a game state object with pot set to initial pot size
     /// and player stacks set to stack size
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `pot` - Initial pot size
     /// * `stack` - Initial stack size for each player
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```
     /// use poker_solver::state::GameState;
     /// let game_state = GameState::new(100, [10000, 10000]);
@@ -96,19 +97,23 @@ impl GameState {
             current_player: 0,
             // 52 since its the first invalid card
             board: [52; 5],
-            bets_settled: false
+            bets_settled: false,
         }
     }
     /// Creates a game state object but with initial wager equal to blinds
-    /// 
+    ///
     /// Both players post their blinds
     /// First to act is switched preflop
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `stacks` The stack size of each player
     /// * `blidds` Big and small blind size, Big should come before small
-    pub fn init_with_blinds(stacks: [u32; 2], blinds: [u32; 2], round: Option<BettingRound>) -> GameState {
+    pub fn init_with_blinds(
+        stacks: [u32; 2],
+        blinds: [u32; 2],
+        round: Option<BettingRound>,
+    ) -> GameState {
         let mut players = stacks.map(|s| PlayerState::new(s));
         let big_blind = min(stacks[0], blinds[0]);
         players[0].stack -= big_blind;
@@ -123,34 +128,36 @@ impl GameState {
             current_player: 1,
             // 52 since its the first invalid card
             board: [52; 5],
-            bets_settled: false
+            bets_settled: false,
         }
     }
     /// Return a list of valid actions a player can take
-    /// 
+    ///
     /// Does not account for Bet or Raise sizes
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```
     /// use poker_solver::state::GameState;
-    /// 
+    ///
     /// let mut state = GameState::new(0, [1000, 1000]);
     /// assert_eq!(state.valid_actions().len(), 2); // CHECK or BET
     pub fn valid_actions(&self) -> Vec<Action> {
-        return ACTIONS.into_iter().filter(|&&action| {
-            self.is_action_valid(action)
-        }).cloned().collect();
+        return ACTIONS
+            .into_iter()
+            .filter(|&&action| self.is_action_valid(action))
+            .cloned()
+            .collect();
     }
     /// Apply an action and return a new updated state object
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `rng` A random number generator
     /// * `action` A valid action
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```
     /// use poker_solver::state::GameState;
     /// use poker_solver::state::Action;
@@ -175,7 +182,7 @@ impl GameState {
                 next_state.current_player_mut().stack -= wager;
                 next_state.pot += wager;
                 next_state.current_player = 1 - next_state.current_player;
-            },
+            }
             Action::RAISE(raise_size) => {
                 // call amount plus our raise
                 let diff = next_state.other_player().wager - next_state.current_player().wager;
@@ -189,7 +196,7 @@ impl GameState {
                 next_state.current_player_mut().stack -= wager;
                 next_state.pot += wager;
                 next_state.current_player = 1 - next_state.current_player;
-            },
+            }
             Action::CALL => {
                 // get difference in bets
                 let mut wager = next_state.other_player().wager - next_state.current_player().wager;
@@ -207,7 +214,7 @@ impl GameState {
                 next_state.current_player_mut().stack -= wager;
                 next_state.pot += wager;
                 next_state.bets_settled = true;
-            },
+            }
             Action::FOLD => {
                 // return difference in wager to other player
                 let diff = next_state.other_player().wager - next_state.current_player().wager;
@@ -218,7 +225,7 @@ impl GameState {
                 // set player folded
                 next_state.current_player_mut().has_folded = true;
                 next_state.bets_settled = true;
-            },
+            }
             Action::CHECK => {
                 // last to act switchs pre flop
                 if next_state.round == BettingRound::PREFLOP && next_state.current_player == 0 {
@@ -235,52 +242,57 @@ impl GameState {
     }
     /// Deals cards in the current round
     /// and update game state
-    /// 
+    ///
     /// If self.round == PREFLOP, it will deal cards to both players
     /// If self.round == FLOP, it will deal 3 public cards
     /// If self.round == TURN, it will deal 1 public card
     /// If self.round == RIVER, it will deal 1 public card
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `rng` a mutable reference to a random number generator
-    pub fn deal_cards<R: Rng>(&mut self, rng: &mut R) {
+    pub fn deal_cards(&mut self) {
+        let mut rng = thread_rng();
         match self.round {
             BettingRound::PREFLOP => {
                 // deal 2 random cards to each player
                 // generate 4 unique random cards
                 let mut used_card_mask = 0u64;
-                let cards: Vec<u8> = (0..4).map(|_| {
-                    let mut card = rng.gen_range(0, 52);
-                    while ((1 << card) & used_card_mask) != 0 {
-                        card = rng.gen_range(0, 52);
-                    }
-                    used_card_mask |= 1 << card;
-                    card
-                }).collect();
+                let cards: Vec<u8> = (0..4)
+                    .map(|_| {
+                        let mut card = rng.gen_range(0, 52);
+                        while ((1 << card) & used_card_mask) != 0 {
+                            card = rng.gen_range(0, 52);
+                        }
+                        used_card_mask |= 1 << card;
+                        card
+                    })
+                    .collect();
                 // assign to players
                 self.players[0].cards[0] = cards[0];
                 self.players[0].cards[1] = cards[1];
                 self.players[1].cards[0] = cards[2];
                 self.players[1].cards[1] = cards[3];
-            },
+            }
             BettingRound::FLOP => {
                 // deal 3 random community cards
                 let mut used_card_mask = self.used_card_mask();
                 // generate 3 unique cards
-                let cards: Vec<u8> = (0..3).map(|_| {
-                    let mut card = rng.gen_range(0, 52);
-                    while ((1 << card) & used_card_mask) != 0 {
-                        card = rng.gen_range(0, 52);
-                    }
-                    used_card_mask |= 1 << card;
-                    card
-                }).collect();
+                let cards: Vec<u8> = (0..3)
+                    .map(|_| {
+                        let mut card = rng.gen_range(0, 52);
+                        while ((1 << card) & used_card_mask) != 0 {
+                            card = rng.gen_range(0, 52);
+                        }
+                        used_card_mask |= 1 << card;
+                        card
+                    })
+                    .collect();
                 // assign to board
                 self.board[0] = cards[0];
                 self.board[1] = cards[1];
                 self.board[2] = cards[2];
-            },
+            }
             BettingRound::TURN => {
                 // deal 1 random community card
                 let used_card_mask = self.used_card_mask();
@@ -289,7 +301,7 @@ impl GameState {
                     card = rng.gen_range(0, 52);
                 }
                 self.board[3] = card;
-            },
+            }
             BettingRound::RIVER => {
                 // deal 1 random community card
                 let used_card_mask = self.used_card_mask();
@@ -302,7 +314,7 @@ impl GameState {
         }
     }
     /// Return a bitmask representing which cards have already been dealt
-    /// 
+    ///
     /// Used for rejection sampling
     fn used_card_mask(&self) -> u64 {
         let mut used_card_mask = 0u64;
@@ -335,9 +347,9 @@ impl GameState {
         return used_card_mask;
     }
     /// Checks whether an action is valid in the current context
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `action` A poker action
     pub fn is_action_valid(&self, action: Action) -> bool {
         match action {
@@ -345,26 +357,26 @@ impl GameState {
                 // only valid if other player has not bet
                 // and we have chips to bet
                 let valid = (self.other_player().wager == 0)
-                && (self.current_player().stack > 0)
-                && (self.current_player().stack >= amt);
+                    && (self.current_player().stack > 0)
+                    && (self.current_player().stack >= amt);
                 return valid;
-            },
+            }
             Action::RAISE(amt) => {
                 // only valid if other player has bet
                 // and we have more money than their wager
                 let valid = (self.other_player().wager != 0)
-                && (self.current_player().stack > self.other_player().wager)
-                && (self.current_player().stack >= amt);
+                    && (self.current_player().stack > self.other_player().wager)
+                    && (self.current_player().stack >= amt);
                 return valid;
-            },
+            }
             Action::CALL => {
                 // only valid if other player has bet more than us
                 return self.other_player().wager > self.current_player().wager;
-            },
+            }
             Action::FOLD => {
                 // only valid if other player has bet more than us
                 return self.other_player().wager > self.current_player().wager;
-            },
+            }
             Action::CHECK => {
                 // only valid if other player has not bet
                 return self.current_player().wager >= self.other_player().wager;
@@ -394,8 +406,8 @@ impl GameState {
     /// Return true if game is over
     pub fn is_game_over(&self) -> bool {
         self.player_folded().is_some()
-        || (self.player_all_in().is_some() && self.bets_settled)
-        || (self.round == BettingRound::RIVER && self.bets_settled)
+            || (self.player_all_in().is_some() && self.bets_settled)
+            || (self.round == BettingRound::RIVER && self.bets_settled)
     }
     /// Return pot size (# of chips)
     pub const fn pot(&self) -> u32 {
@@ -421,13 +433,17 @@ impl GameState {
     pub fn bets_settled(&self) -> bool {
         return self.bets_settled;
     }
+    /// Return player stacks
+    pub fn stacks(&self) -> [u32; 2] {
+        [self.player(0).stack, self.player(1).stack]
+    }
     /// Return a reference to the acting player state
     pub fn current_player(&self) -> &PlayerState {
         return &self.players[usize::from(self.current_player)];
     }
     /// Return a reference to the not acting player state
     pub fn other_player(&self) -> &PlayerState {
-        return &self.players[usize::from(1-self.current_player)];
+        return &self.players[usize::from(1 - self.current_player)];
     }
     /// Return a mutable reference to the acting player state
     fn current_player_mut(&mut self) -> &mut PlayerState {
@@ -444,13 +460,13 @@ impl GameState {
         match next_state.round {
             BettingRound::PREFLOP => {
                 next_state.round = BettingRound::FLOP;
-            },
+            }
             BettingRound::FLOP => {
                 next_state.round = BettingRound::TURN;
-            },
+            }
             BettingRound::TURN => {
                 next_state.round = BettingRound::RIVER;
-            },
+            }
             BettingRound::RIVER => {
                 // game is over, do nothing
                 return next_state;
@@ -460,7 +476,6 @@ impl GameState {
         next_state.current_player = 0;
         next_state.current_player_mut().wager = 0;
         next_state.other_player_mut().wager = 0;
-        
         next_state
     }
 }

@@ -1,45 +1,48 @@
+use rand::thread_rng;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::stream::{Stream, StreamExt};
 use tokio::sync::{mpsc, Mutex};
+use tokio::task;
 use tokio_util::codec::Framed;
 
 use futures::SinkExt;
 use std::collections::HashMap;
 use std::error::Error;
 use std::io;
+use std::iter;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use poker_solver::codec::{PokerCodec, PokerCodecError};
-use poker_solver::event::PokerEvent;
+use poker_solver::event::{PokerEvent, PokerEventType};
+use poker_solver::round::BettingRound;
+use poker_solver::state::GameState;
 
 type Tx = mpsc::UnboundedSender<PokerEvent>;
 type Rx = mpsc::UnboundedReceiver<PokerEvent>;
 
 /// Shared state
 struct Shared {
-    peers: HashMap<SocketAddr, Tx>
+    peers: Vec<(SocketAddr, Tx)>,
 }
 
 impl Shared {
     fn new() -> Self {
-        Shared {
-            peers: HashMap::new()
-        }
+        Shared { peers: Vec::new() }
     }
 }
 
 struct Peer {
     rx: Rx,
-    codec: Framed<TcpStream, PokerCodec>
+    codec: Framed<TcpStream, PokerCodec>,
 }
 
 #[derive(Debug)]
 enum Message {
     FromClient(PokerEvent),
-    FromServer(PokerEvent)
+    FromServer(PokerEvent),
 }
 
 impl Stream for Peer {
@@ -68,18 +71,23 @@ impl Stream for Peer {
 }
 
 impl Peer {
-    async fn new(state: Arc<Mutex<Shared>>, codec: Framed<TcpStream, PokerCodec>) -> io::Result<Peer> {
+    async fn new(
+        state: Arc<Mutex<Shared>>,
+        codec: Framed<TcpStream, PokerCodec>,
+    ) -> io::Result<Peer> {
         let addr = codec.get_ref().peer_addr()?;
         let (tx, rx) = mpsc::unbounded_channel();
-        state.lock().await.peers.insert(addr, tx);
-        Ok(Peer {
-            rx,
-            codec
-        })
+        state.lock().await.peers.push((addr, tx));
+        Ok(Peer { rx, codec })
     }
 }
 
-async fn handle_client(state: Arc<Mutex<Shared>>, tx: Tx, stream: TcpStream, addr: SocketAddr) -> Result<(), Box<dyn Error>> {
+async fn handle_client(
+    state: Arc<Mutex<Shared>>,
+    tx: Tx,
+    stream: TcpStream,
+    addr: SocketAddr,
+) -> Result<(), Box<dyn Error>> {
     // connect client and add peer
     let codec = Framed::new(stream, PokerCodec::new());
     let mut peer = Peer::new(state.clone(), codec).await?;
@@ -91,11 +99,11 @@ async fn handle_client(state: Arc<Mutex<Shared>>, tx: Tx, stream: TcpStream, add
             Ok(Message::FromClient(msg)) => {
                 // relay message to game server
                 tx.send(msg.clone())?;
-            },
+            }
             Ok(Message::FromServer(msg)) => {
                 // relay message to client
                 peer.codec.send(msg).await?;
-            },
+            }
             Err(e) => {
                 println!("recv err: {}", e);
             }
@@ -104,25 +112,126 @@ async fn handle_client(state: Arc<Mutex<Shared>>, tx: Tx, stream: TcpStream, add
     // disconnect client
     {
         println!("Client {} has disconnected", addr);
-        let mut state = state.lock().await;
-        state.peers.remove(&addr);
+        // TODO remove from state.peers
+        // let mut state = state.lock().await;
+        // state.peers.remove(&addr);
     }
     Ok(())
 }
 
-async fn game_loop(state: Arc<Mutex<Shared>>, mut rx: Rx) -> Result<(), Box<dyn Error>> {
-    while let Some(event) = rx.next().await {
-        // demo
-        // let mut state = state.lock().await;
-        // let tx = state.peers.get(&event.from).unwrap();
-        // tx.send(event.clone())?;
+struct Server {
+    addr: SocketAddr,
+    state: Arc<Mutex<Shared>>,
+    hand_state: GameState,
+    stacks: [u32; 2],
+    rx: Rx,
+}
+
+impl Server {
+    fn new(state: Arc<Mutex<Shared>>, mut rx: Rx, addr: SocketAddr) -> Self {
+        Server {
+            state,
+            addr,
+            rx,
+            stacks: [1000, 1000],
+            hand_state: GameState::init_with_blinds([1000, 1000], [10, 5], None),
+        }
     }
-    Ok(())
+    async fn start(
+        state: Arc<Mutex<Shared>>,
+        rx: Rx,
+        addr: SocketAddr,
+    ) -> Result<(), Box<dyn Error>> {
+        let mut server = Server::new(state, rx, addr);
+        server.game_loop().await
+    }
+    async fn game_loop(&mut self) -> Result<(), Box<dyn Error>> {
+        // wait for 2 players to connect
+        while self.state.lock().await.peers.len() != 2 {
+            task::yield_now().await;
+        }
+        println!("Two players have connected, starting game");
+        // create initial hand state
+        self.hand_state = GameState::init_with_blinds(self.stacks, [10, 5], None);
+        // tell players hand is starting
+        self.sendall(PokerEvent {
+            from: self.addr,
+            event: PokerEventType::StartHand {
+                stacks: self.hand_state.stacks().into(),
+            },
+        })
+        .await;
+        // deal hands
+        self.deal_cards().await;
+
+        while let Some(event) = self.rx.next().await {
+            // handle msgs from clients
+        }
+        Ok(())
+    }
+    /// Generate random cards based on the current betting round
+    /// and alert players of their new cards
+    async fn deal_cards(&mut self) {
+        self.hand_state.deal_cards();
+        match self.hand_state.round() {
+            BettingRound::PREFLOP => {
+                self.send(
+                    0,
+                    PokerEvent {
+                        from: self.addr,
+                        event: PokerEventType::DealCards {
+                            round: self.hand_state.round(),
+                            cards: self.hand_state.current_player().cards().to_vec(),
+                            n_cards: 2,
+                        },
+                    },
+                )
+                .await;
+                self.send(
+                    1,
+                    PokerEvent {
+                        from: self.addr,
+                        event: PokerEventType::DealCards {
+                            round: self.hand_state.round(),
+                            cards: self.hand_state.other_player().cards().to_vec(),
+                            n_cards: 2,
+                        },
+                    },
+                )
+                .await;
+            }
+            _ => {
+                self.sendall(PokerEvent {
+                    from: "0.0.0.0:3333".parse().unwrap(),
+                    event: PokerEventType::DealCards {
+                        round: self.hand_state.round(),
+                        cards: self.hand_state.board().to_vec(),
+                        n_cards: 5,
+                    },
+                })
+                .await;
+            }
+        }
+    }
+    /// Send a message to a player at index
+    async fn send(&mut self, index: usize, message: PokerEvent) {
+        assert!(index < 3);
+        let state = self.state.lock().await;
+        state.peers[index].1.send(message);
+    }
+    /// Send a message to all players
+    async fn sendall(&mut self, message: PokerEvent) {
+        let mut state = self.state.lock().await;
+        for peer in state.peers.iter_mut() {
+            let _ = peer.1.send(message.clone());
+        }
+    }
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let listener = TcpListener::bind("0.0.0.0:3333").await?;
+    let server_addr = listener.local_addr().unwrap();
     let (tx, rx) = mpsc::unbounded_channel();
     let state = Arc::new(Mutex::new(Shared::new()));
     println!("server listening on 0.0.0.0:3333");
@@ -130,7 +239,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Create game handler
     tokio::spawn(async move {
         // handle game loop
-        if let Err(e) = game_loop(_state, rx).await {
+        if let Err(e) = Server::start(_state, rx, server_addr).await {
             println!("game loop returned error: {}", e);
         }
     });

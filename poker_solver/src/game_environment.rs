@@ -1,10 +1,10 @@
 // use rand::thread_rng;
-use rand::rngs::ThreadRng;
 use crate::agents::Agent;
-use crate::state::GameState;
-use crate::round::BettingRound;
 use crate::card::{cards_to_str, score_hand};
+use crate::round::BettingRound;
+use crate::state::GameState;
 use colored::*;
+use rand::rngs::ThreadRng;
 
 /// Simulates HUNL Texas Holdem game between two agents
 pub struct GameEnvironment {
@@ -13,7 +13,7 @@ pub struct GameEnvironment {
     /// update stack size for each player after every hand
     pub stacks: [u32; 2],
     /// A seeded rng object for generating random numbers
-    pub rng: ThreadRng
+    pub rng: ThreadRng,
 }
 
 impl GameEnvironment {
@@ -23,8 +23,11 @@ impl GameEnvironment {
         while !self.game_is_over() {
             // simulate a single hand
             println!("");
-            println!("{}","Dealing new hand".bright_red());
-            println!("Current stack sizes [{} : {}]", self.stacks[0], self.stacks[1]);
+            println!("{}", "Dealing new hand".bright_red());
+            println!(
+                "Current stack sizes [{} : {}]",
+                self.stacks[0], self.stacks[1]
+            );
             println!("");
 
             println!("Posting blinds & Dealing cards");
@@ -35,7 +38,7 @@ impl GameEnvironment {
             // create a state object using current stacks as initial stacks
             let mut state = GameState::init_with_blinds(self.stacks, [10, 5], None);
             // deal cards to both players
-            state.deal_cards(&mut self.rng);
+            state.deal_cards();
 
             while !state.is_game_over() {
                 let acting_player = usize::from(state.current_player_idx());
@@ -43,12 +46,17 @@ impl GameEnvironment {
                 // print to terminal
                 println!("Player {} has chosen to {}", acting_player, action);
                 state = state.apply_action(action);
-                println!("Stacks: [{}, {}],  Pot: {}", state.player(0).stack(), state.player(1).stack(), state.pot());
+                println!(
+                    "Stacks: [{}, {}],  Pot: {}",
+                    state.player(0).stack(),
+                    state.player(1).stack(),
+                    state.pot()
+                );
                 println!("");
                 // if betting is finished, advance to next round
                 if state.bets_settled() && !state.is_game_over() {
                     state = state.next_round();
-                    state.deal_cards(&mut self.rng);
+                    state.deal_cards();
                     println!("Dealing {}...", state.round());
                     println!("Board cards: [{}]", cards_to_str(state.board()));
                 }
@@ -62,7 +70,12 @@ impl GameEnvironment {
             self.stacks[1] = state.player(1).stack();
 
             if let Some(player_fold) = state.player_folded() {
-                println!("Player {} has folded.  Player {} wins {}", player_fold, 1 - player_fold, pot);
+                println!(
+                    "Player {} has folded.  Player {} wins {}",
+                    player_fold,
+                    1 - player_fold,
+                    pot
+                );
                 // handle fold
                 // award chips to winner
                 self.stacks[1 - usize::from(player_fold)] += pot;
@@ -71,11 +84,19 @@ impl GameEnvironment {
                 while state.round() != BettingRound::RIVER {
                     // next round deals cards and increments round
                     state = state.next_round();
-                    state.deal_cards(&mut self.rng);
+                    state.deal_cards();
                 }
                 println!("The board is [{}]", cards_to_str(state.board()));
-                println!("Player {} has [{}]", 0, cards_to_str(state.player(0).cards()));
-                println!("Player {} has [{}]", 1, cards_to_str(state.player(1).cards()));
+                println!(
+                    "Player {} has [{}]",
+                    0,
+                    cards_to_str(state.player(0).cards())
+                );
+                println!(
+                    "Player {} has [{}]",
+                    1,
+                    cards_to_str(state.player(1).cards())
+                );
 
                 // evaluate winner
                 // create public cards
@@ -109,7 +130,7 @@ impl GameEnvironment {
         println!("Game over");
     }
     /// Return true is game has finished
-    /// 
+    ///
     /// This checks to see if both players have money
     fn game_is_over(&self) -> bool {
         return !(self.stacks[0] > 0 && self.stacks[1] > 0);
