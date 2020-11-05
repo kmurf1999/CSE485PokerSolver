@@ -383,6 +383,17 @@ impl GameState {
             }
         }
     }
+    /// Return the default action (CHECK/FOLD)
+    ///
+    /// This function is used when a player has not acted in time
+    /// or some other error has been encounrered
+    pub fn default_action(&self) -> Action {
+        let actions = self.valid_actions();
+        if actions.contains(&Action::CHECK) {
+            return Action::CHECK;
+        }
+        Action::FOLD
+    }
     /// Returns index of folded player or None
     pub fn player_folded(&self) -> Option<u8> {
         if self.current_player().has_folded {

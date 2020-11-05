@@ -1,24 +1,28 @@
-use rand::thread_rng;
+use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::stream::{Stream, StreamExt};
 use tokio::sync::{mpsc, Mutex};
 use tokio::task;
+use tokio::time::timeout;
 use tokio_util::codec::Framed;
 
 use futures::SinkExt;
-use std::collections::HashMap;
 use std::error::Error;
 use std::io;
-use std::iter;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
+use poker_solver::action::Action;
+use poker_solver::card::score_hand;
 use poker_solver::codec::{PokerCodec, PokerCodecError};
 use poker_solver::event::{PokerEvent, PokerEventType};
 use poker_solver::round::BettingRound;
 use poker_solver::state::GameState;
+
+/// Maximum of seconds to wait for a player action
+static TIMEOUT: u64 = 30;
 
 type Tx = mpsc::UnboundedSender<PokerEvent>;
 type Rx = mpsc::UnboundedReceiver<PokerEvent>;
@@ -128,7 +132,7 @@ struct Server {
 }
 
 impl Server {
-    fn new(state: Arc<Mutex<Shared>>, mut rx: Rx, addr: SocketAddr) -> Self {
+    fn new(state: Arc<Mutex<Shared>>, rx: Rx, addr: SocketAddr) -> Self {
         Server {
             state,
             addr,
@@ -156,18 +160,129 @@ impl Server {
         // tell players hand is starting
         self.sendall(PokerEvent {
             from: self.addr,
-            event: PokerEventType::StartHand {
+            event: PokerEventType::HandStart {
                 stacks: self.hand_state.stacks().into(),
+                pot: self.hand_state.pot(),
             },
         })
         .await;
         // deal hands
         self.deal_cards().await;
-
-        while let Some(event) = self.rx.next().await {
-            // handle msgs from clients
+        while !self.hand_state.is_game_over() {
+            // tell current player to make a move
+            let current_player = self.hand_state.current_player_idx();
+            self.send(
+                current_player.into(),
+                PokerEvent {
+                    from: self.addr,
+                    event: PokerEventType::RequestAction,
+                },
+            )
+            .await;
+            // recv action from that player
+            // or if action cannot be recieved, apply default action (CHECK / FOLD)
+            // give a player 30 seconds to decide
+            let action: Action = match timeout(
+                Duration::from_secs(TIMEOUT),
+                self.recv_action(current_player.into()),
+            )
+            .await
+            {
+                Ok(Some(action)) => action,
+                Ok(None) => self.hand_state.default_action(),
+                Err(_) => self.hand_state.default_action(),
+            };
+            println!("action taken");
+            // let action: Action = self
+            //     .recv_action(current_player.into())
+            //     .await?
+            //     .unwrap_or_else(|| self.hand_state.default_action());
+            // apply action to state
+            self.hand_state = self.hand_state.apply_action(action);
+            // alert players that action has been taken by a player
+            self.sendall(PokerEvent {
+                from: self.addr,
+                event: PokerEventType::AlertAction {
+                    player: current_player,
+                    action,
+                    pot: self.hand_state.pot(),
+                },
+            })
+            .await;
+            if self.hand_state.is_game_over() {
+                break;
+            }
+            // deal more cards if necessary
+            if self.hand_state.bets_settled() {
+                self.deal_cards().await;
+            }
         }
+        // evaluate winner of hand
+        self.stacks = self.hand_state.stacks();
+        if let Some(loser) = self.hand_state.player_folded() {
+            let winner = 1 - loser;
+            // add chips to winner
+            self.stacks[usize::from(winner)] += self.hand_state.pot();
+            self.sendall(PokerEvent {
+                from: self.addr,
+                event: PokerEventType::HandOver {
+                    winner: 1 - loser,
+                    stacks: self.stacks,
+                    pot: self.hand_state.pot(),
+                },
+            })
+            .await;
+        } else {
+            while self.hand_state.round() != BettingRound::RIVER {
+                self.deal_cards().await;
+            }
+            // find out who won
+            let pot = self.hand_state.pot();
+            let score0 = score_hand(self.hand_state.board(), self.hand_state.player(0).cards());
+            let score1 = score_hand(self.hand_state.board(), self.hand_state.player(1).cards());
+            let winner: u8;
+            if score0 > score1 {
+                winner = 0;
+                self.stacks[usize::from(winner)] += pot;
+            } else if score1 > score0 {
+                winner = 1;
+                self.stacks[usize::from(winner)] += pot;
+            } else {
+                winner = 2;
+                self.stacks[0] += pot / 2;
+                self.stacks[1] += pot / 2;
+            }
+            self.sendall(PokerEvent {
+                from: self.addr,
+                event: PokerEventType::HandOver {
+                    winner,
+                    stacks: self.stacks,
+                    pot: self.hand_state.pot(),
+                },
+            })
+            .await;
+        }
+        // set stacks
+        self.stacks = self.hand_state.stacks();
         Ok(())
+    }
+    /// Receive an action from a player at index
+    /// will loop until a valid action has been received from that player
+    async fn recv_action(&mut self, from: usize) -> Option<Action> {
+        assert!(from < 3);
+        let addr = self.state.lock().await.peers[from].0;
+        while let Some(msg) = self.rx.next().await {
+            // make sure address is valid
+            if msg.from != addr {
+                continue;
+            }
+            if let PokerEventType::SendAction { action } = msg.event {
+                if self.hand_state.is_action_valid(action) {
+                    return Some(action);
+                }
+            }
+        }
+        None
     }
     /// Generate random cards based on the current betting round
     /// and alert players of their new cards
@@ -217,7 +332,7 @@ impl Server {
     async fn send(&mut self, index: usize, message: PokerEvent) {
         assert!(index < 3);
         let state = self.state.lock().await;
-        state.peers[index].1.send(message);
+        let _ = state.peers[index].1.send(message);
     }
     /// Send a message to all players
     async fn sendall(&mut self, message: PokerEvent) {
