@@ -1,24 +1,29 @@
-use rand::thread_rng;
+use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::stream::{Stream, StreamExt};
 use tokio::sync::{mpsc, Mutex};
 use tokio::task;
+use tokio::time::timeout;
 use tokio_util::codec::Framed;
 
 use futures::SinkExt;
-use std::collections::HashMap;
 use std::error::Error;
 use std::io;
-use std::iter;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
+use poker_solver::action::Action;
+use poker_solver::agents::{HumanAgent, RandomAgent};
+use poker_solver::card::score_hand;
 use poker_solver::codec::{PokerCodec, PokerCodecError};
 use poker_solver::event::{PokerEvent, PokerEventType};
 use poker_solver::round::BettingRound;
 use poker_solver::state::GameState;
+
+/// Maximum of seconds to wait for a player action
+static TIMEOUT: u64 = 30;
 
 type Tx = mpsc::UnboundedSender<PokerEvent>;
 type Rx = mpsc::UnboundedReceiver<PokerEvent>;
@@ -122,19 +127,17 @@ async fn handle_client(
 struct Server {
     addr: SocketAddr,
     state: Arc<Mutex<Shared>>,
-    hand_state: GameState,
     stacks: [u32; 2],
     rx: Rx,
 }
 
 impl Server {
-    fn new(state: Arc<Mutex<Shared>>, mut rx: Rx, addr: SocketAddr) -> Self {
+    fn new(state: Arc<Mutex<Shared>>, rx: Rx, addr: SocketAddr) -> Self {
         Server {
             state,
             addr,
             rx,
             stacks: [1000, 1000],
-            hand_state: GameState::init_with_blinds([1000, 1000], [10, 5], None),
         }
     }
     async fn start(
@@ -143,45 +146,188 @@ impl Server {
         addr: SocketAddr,
     ) -> Result<(), Box<dyn Error>> {
         let mut server = Server::new(state, rx, addr);
-        server.game_loop().await
+        server.run_game().await
     }
-    async fn game_loop(&mut self) -> Result<(), Box<dyn Error>> {
+    async fn run_hand(&mut self) -> Result<(), Box<dyn Error>> {
+        let mut hand_state = GameState::init_with_blinds(self.stacks, [10, 5], None);
+        // tell players hand is starting
+        self.send(
+            0,
+            PokerEvent {
+                from: self.addr,
+                event: PokerEventType::HandStart {
+                    stacks: self.stacks,
+                    blinds: [10, 5],
+                    position: 0,
+                },
+            },
+        )
+        .await;
+        self.send(
+            1,
+            PokerEvent {
+                from: self.addr,
+                event: PokerEventType::HandStart {
+                    stacks: self.stacks,
+                    blinds: [10, 5],
+                    position: 1,
+                },
+            },
+        )
+        .await;
+        // deal hands
+        self.deal_cards(&mut hand_state).await;
+        while !hand_state.is_game_over() {
+            // tell current player to make a move
+            let current_player = hand_state.current_player_idx();
+            self.send(
+                current_player.into(),
+                PokerEvent {
+                    from: self.addr,
+                    event: PokerEventType::RequestAction,
+                },
+            )
+            .await;
+            // recv action from that player
+            // or if action cannot be recieved, apply default action (CHECK / FOLD)
+            // give a player 30 seconds to decide
+            let action: Action = match timeout(
+                Duration::from_secs(TIMEOUT),
+                self.recv_action(&mut hand_state, current_player.into()),
+            )
+            .await
+            {
+                Ok(Some(action)) => action,
+                Ok(None) => hand_state.default_action(),
+                Err(_) => hand_state.default_action(),
+            };
+            hand_state = hand_state.apply_action(action);
+            // alert players that action has been taken by a player
+            self.sendall(PokerEvent {
+                from: self.addr,
+                event: PokerEventType::AlertAction {
+                    player: current_player,
+                    action,
+                    stacks: hand_state.stacks(),
+                    wagers: hand_state.wagers(),
+                    pot: hand_state.pot(),
+                },
+            })
+            .await;
+            // deal more cards if necessary
+            if hand_state.bets_settled() {
+                if hand_state.is_game_over() {
+                    break;
+                }
+                hand_state = hand_state.next_round();
+                self.deal_cards(&mut hand_state).await;
+            }
+        }
+        // evaluate winner of hand
+        self.stacks = hand_state.stacks();
+        if let Some(loser) = hand_state.player_folded() {
+            let winner = 1 - loser;
+            // add chips to winner
+            self.stacks[usize::from(winner)] += hand_state.pot();
+            self.sendall(PokerEvent {
+                from: self.addr,
+                event: PokerEventType::HandOver {
+                    winner: 1 - loser,
+                    stacks: self.stacks,
+                    pot: hand_state.pot(),
+                },
+            })
+            .await;
+        } else {
+            while hand_state.round() != BettingRound::RIVER {
+                self.deal_cards(&mut hand_state).await;
+            }
+            // find out who won
+            let pot = hand_state.pot();
+            let score0 = score_hand(hand_state.board(), hand_state.player(0).cards());
+            let score1 = score_hand(hand_state.board(), hand_state.player(1).cards());
+            let winner: u8;
+            if score0 > score1 {
+                winner = 0;
+                self.stacks[usize::from(winner)] += pot;
+            } else if score1 > score0 {
+                winner = 1;
+                self.stacks[usize::from(winner)] += pot;
+            } else {
+                winner = 2;
+                self.stacks[0] += pot / 2;
+                self.stacks[1] += pot / 2;
+            }
+            self.sendall(PokerEvent {
+                from: self.addr,
+                event: PokerEventType::HandOver {
+                    winner,
+                    stacks: self.stacks,
+                    pot: hand_state.pot(),
+                },
+            })
+            .await;
+        }
+        Ok(())
+    }
+    async fn run_game(&mut self) -> Result<(), Box<dyn Error>> {
         // wait for 2 players to connect
         while self.state.lock().await.peers.len() != 2 {
             task::yield_now().await;
         }
         println!("Two players have connected, starting game");
-        // create initial hand state
-        self.hand_state = GameState::init_with_blinds(self.stacks, [10, 5], None);
-        // tell players hand is starting
-        self.sendall(PokerEvent {
-            from: self.addr,
-            event: PokerEventType::StartHand {
-                stacks: self.hand_state.stacks().into(),
-            },
-        })
-        .await;
-        // deal hands
-        self.deal_cards().await;
-
-        while let Some(event) = self.rx.next().await {
-            // handle msgs from clients
+        // Run hands until game is done
+        while self.stacks.iter().position(|&s| s == 0).is_none() {
+            self.run_hand().await?;
+            // TODO
+            // switch stacks and peers
+            // This is to switch blinds and who goes first
+            // Find a better way to do this
+            self.stacks.reverse();
+            self.state.lock().await.peers.reverse();
         }
         Ok(())
     }
+    /// Receive an action from a player at index
+    /// will loop until a valid action has been received from that player
+    async fn recv_action(&mut self, hand_state: &mut GameState, from: usize) -> Option<Action> {
+        assert!(from < 3);
+        let addr = self.state.lock().await.peers[from].0;
+        while let Some(msg) = self.rx.next().await {
+            // make sure address is valid
+            if msg.from != addr {
+                continue;
+            }
+            if let PokerEventType::SendAction { action } = msg.event {
+                if hand_state.is_action_valid(action) {
+                    return Some(action);
+                }
+                // tell them they need to try again
+                self.send(
+                    from,
+                    PokerEvent {
+                        from: self.addr,
+                        event: PokerEventType::RequestAction,
+                    },
+                )
+                .await;
+            }
+        }
+        None
+    }
     /// Generate random cards based on the current betting round
     /// and alert players of their new cards
-    async fn deal_cards(&mut self) {
-        self.hand_state.deal_cards();
-        match self.hand_state.round() {
+    async fn deal_cards(&mut self, hand_state: &mut GameState) {
+        hand_state.deal_cards();
+        match hand_state.round() {
             BettingRound::PREFLOP => {
                 self.send(
                     0,
                     PokerEvent {
                         from: self.addr,
                         event: PokerEventType::DealCards {
-                            round: self.hand_state.round(),
-                            cards: self.hand_state.current_player().cards().to_vec(),
+                            round: hand_state.round(),
+                            cards: hand_state.current_player().cards().to_vec(),
                             n_cards: 2,
                         },
                     },
@@ -192,8 +338,8 @@ impl Server {
                     PokerEvent {
                         from: self.addr,
                         event: PokerEventType::DealCards {
-                            round: self.hand_state.round(),
-                            cards: self.hand_state.other_player().cards().to_vec(),
+                            round: hand_state.round(),
+                            cards: hand_state.other_player().cards().to_vec(),
                             n_cards: 2,
                         },
                     },
@@ -204,8 +350,8 @@ impl Server {
                 self.sendall(PokerEvent {
                     from: "0.0.0.0:3333".parse().unwrap(),
                     event: PokerEventType::DealCards {
-                        round: self.hand_state.round(),
-                        cards: self.hand_state.board().to_vec(),
+                        round: hand_state.round(),
+                        cards: hand_state.board().to_vec(),
                         n_cards: 5,
                     },
                 })
@@ -217,7 +363,7 @@ impl Server {
     async fn send(&mut self, index: usize, message: PokerEvent) {
         assert!(index < 3);
         let state = self.state.lock().await;
-        state.peers[index].1.send(message);
+        let _ = state.peers[index].1.send(message);
     }
     /// Send a message to all players
     async fn sendall(&mut self, message: PokerEvent) {
@@ -241,6 +387,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
         // handle game loop
         if let Err(e) = Server::start(_state, rx, server_addr).await {
             println!("game loop returned error: {}", e);
+        }
+    });
+    // Connect Game agents
+    tokio::spawn(async move {
+        if let Err(e) = RandomAgent::start(server_addr).await {
+            println!("agent returned error: {}", e);
+        }
+    });
+    tokio::spawn(async move {
+        if let Err(e) = HumanAgent::start(server_addr).await {
+            println!("agent returned error: {}", e);
         }
     });
     // Spawn client handlers

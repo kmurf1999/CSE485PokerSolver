@@ -1,3 +1,8 @@
+///
+///
+///
+///
+///
 use bytes::{Buf, BufMut, BytesMut};
 use serde::Serialize;
 use std::error::Error;
@@ -104,7 +109,6 @@ impl Decoder for PokerCodec {
                     self.next_index = 0;
                     let line = buf.split_to(json_index + 1);
                     let line = str::from_utf8(&line)?;
-                    println!("{}", line);
                     return match serde_json::from_str(&line) {
                         Ok(event) => Ok(Some(event)),
                         Err(_) => Err(PokerCodecError::InvalidEvent),
