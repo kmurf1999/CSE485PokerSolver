@@ -6,7 +6,12 @@ use std::net::SocketAddr;
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum PokerEventType {
     /// Used to alert players that game has started
-    HandStart { stacks: [u32; 2], pot: u32 },
+    HandStart {
+        /// what seat the player is in
+        position: u8,
+        blinds: [u32; 2],
+        stacks: [u32; 2],
+    },
     HandOver {
         winner: u8,
         stacks: [u32; 2],
@@ -25,6 +30,8 @@ pub enum PokerEventType {
         action: Action,
         player: u8,
         pot: u32,
+        stacks: [u32; 2],
+        wagers: [u32; 2],
     },
     /// Used to alert the server that a player intends to take an action
     SendAction { action: Action },

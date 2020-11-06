@@ -5,6 +5,10 @@ use std::cmp::min;
 use crate::action::{Action, ACTIONS};
 use crate::round::BettingRound;
 
+/// We'll use this for now to define min-bets
+/// this will be changed in the future
+static BIG_BLIND: u32 = 10;
+
 /// Represents the state of a single player in a HUNL Texas Holdem Game
 #[derive(Debug, Copy, Clone)]
 pub struct PlayerState {
@@ -17,6 +21,17 @@ pub struct PlayerState {
     cards: [u8; 2],
     /// Has the player folded
     has_folded: bool,
+}
+
+impl Default for PlayerState {
+    fn default() -> Self {
+        PlayerState {
+            stack: 0,
+            wager: 0,
+            cards: [52; 2],
+            has_folded: false,
+        }
+    }
 }
 
 /// Represents the current state of a HUNL Texas Holdem Game
@@ -70,6 +85,19 @@ impl PlayerState {
     /// Return has folded
     pub const fn folded(&self) -> bool {
         return self.has_folded;
+    }
+}
+
+impl Default for GameState {
+    fn default() -> Self {
+        GameState {
+            round: BettingRound::PREFLOP,
+            pot: 0,
+            players: [PlayerState::default(), PlayerState::default()],
+            current_player: 0,
+            board: [52; 5],
+            bets_settled: false,
+        }
     }
 }
 
@@ -143,11 +171,22 @@ impl GameState {
     /// let mut state = GameState::new(0, [1000, 1000]);
     /// assert_eq!(state.valid_actions().len(), 2); // CHECK or BET
     pub fn valid_actions(&self) -> Vec<Action> {
-        return ACTIONS
+        ACTIONS
             .into_iter()
-            .filter(|&&action| self.is_action_valid(action))
+            .filter(|&&action| {
+                if let Action::BET(_) = action {
+                    let min_bet = std::cmp::min(BIG_BLIND, self.current_player().stack);
+                    return self.is_action_valid(Action::BET(min_bet));
+                } else if let Action::RAISE(_) = action {
+                    let min_raise =
+                        std::cmp::min(2 * self.other_player().wager, self.current_player().stack);
+                    return self.is_action_valid(Action::RAISE(min_raise));
+                } else {
+                    return self.is_action_valid(action);
+                }
+            })
             .cloned()
-            .collect();
+            .collect()
     }
     /// Apply an action and return a new updated state object
     ///
@@ -358,15 +397,18 @@ impl GameState {
                 // and we have chips to bet
                 let valid = (self.other_player().wager == 0)
                     && (self.current_player().stack > 0)
-                    && (self.current_player().stack >= amt);
+                    && (self.current_player().stack >= amt)
+                    && (amt >= BIG_BLIND || amt == self.current_player().stack);
                 return valid;
             }
             Action::RAISE(amt) => {
                 // only valid if other player has bet
                 // and we have more money than their wager
+                // and we raise about the minimum (2 * other player wager) or we went all in
                 let valid = (self.other_player().wager != 0)
                     && (self.current_player().stack > self.other_player().wager)
-                    && (self.current_player().stack >= amt);
+                    && (self.current_player().stack >= amt)
+                    && (amt >= 2 * self.other_player().wager || amt == self.current_player().stack);
                 return valid;
             }
             Action::CALL => {
@@ -447,6 +489,10 @@ impl GameState {
     /// Return player stacks
     pub fn stacks(&self) -> [u32; 2] {
         [self.player(0).stack, self.player(1).stack]
+    }
+    /// Return player wagers
+    pub fn wagers(&self) -> [u32; 2] {
+        [self.player(0).wager, self.player(1).wager]
     }
     /// Return a reference to the acting player state
     pub fn current_player(&self) -> &PlayerState {
