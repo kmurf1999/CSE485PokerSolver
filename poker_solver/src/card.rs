@@ -1,8 +1,7 @@
 use std::iter::FromIterator;
 
-use rust_poker::hand_evaluator::{evaluate, CARDS, Hand};
-use rust_poker::constants::{ RANK_TO_CHAR, SUIT_TO_CHAR };
-
+use rust_poker::constants::{RANK_TO_CHAR, SUIT_TO_CHAR};
+use rust_poker::hand_evaluator::{evaluate, Hand, CARDS};
 
 /// use 8 bit integer to represent a playing card
 /// valid cards n: 0->51
@@ -19,11 +18,11 @@ pub fn cards_to_str(cards: &[Card]) -> String {
 }
 
 /// Scores a texas holdem hand
-/// 
+///
 /// Combines private cards and public board cards
 /// to create the best 5-card hand possible
 /// and returns its score
-/// 
+///
 /// higher score is better
 pub fn score_hand(board: &[Card], private_cards: &[Card]) -> u16 {
     let mut hand = Hand::empty();
@@ -43,4 +42,3 @@ pub fn player_hand_score(private_cards: &[Card]) -> u16 {
     });
     return evaluate(&hand);
 }
-

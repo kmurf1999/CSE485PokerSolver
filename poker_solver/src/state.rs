@@ -3,6 +3,7 @@ use rand::thread_rng;
 use std::cmp::min;
 
 use crate::action::{Action, ACTIONS};
+use crate::card::Card;
 use crate::round::BettingRound;
 
 /// We'll use this for now to define min-bets
@@ -18,7 +19,7 @@ pub struct PlayerState {
     wager: u32,
     /// Player hole cards
     /// card is n in 0..52 where n = 4 * rank + suit
-    cards: [u8; 2],
+    cards: [Card; 2],
     /// Has the player folded
     has_folded: bool,
 }
@@ -50,7 +51,7 @@ pub struct GameState {
     current_player: u8,
     /// Community Cards
     /// card is n in 0..52 where n = 4 * rank + suit
-    board: [u8; 5],
+    board: [Card; 5],
     /// Has betting finished for the current round
     bets_settled: bool,
 }
@@ -79,7 +80,7 @@ impl PlayerState {
         return self.wager;
     }
     /// Return cards
-    pub const fn cards(&self) -> &[u8; 2] {
+    pub const fn cards(&self) -> &[Card; 2] {
         return &self.cards;
     }
     /// Return has folded
@@ -297,7 +298,7 @@ impl GameState {
                 // deal 2 random cards to each player
                 // generate 4 unique random cards
                 let mut used_card_mask = 0u64;
-                let cards: Vec<u8> = (0..4)
+                let cards: Vec<Card> = (0..4)
                     .map(|_| {
                         let mut card = rng.gen_range(0, 52);
                         while ((1 << card) & used_card_mask) != 0 {
@@ -317,7 +318,7 @@ impl GameState {
                 // deal 3 random community cards
                 let mut used_card_mask = self.used_card_mask();
                 // generate 3 unique cards
-                let cards: Vec<u8> = (0..3)
+                let cards: Vec<Card> = (0..3)
                     .map(|_| {
                         let mut card = rng.gen_range(0, 52);
                         while ((1 << card) & used_card_mask) != 0 {
@@ -479,7 +480,7 @@ impl GameState {
         return &self.players[player_index];
     }
     /// Return reference to public cards
-    pub const fn board(&self) -> &[u8; 5] {
+    pub const fn board(&self) -> &[Card; 5] {
         return &self.board;
     }
     /// Return bets settled
