@@ -23,7 +23,7 @@ use poker_solver::round::BettingRound;
 use poker_solver::state::GameState;
 
 /// Maximum of seconds to wait for a player action
-static TIMEOUT: u64 = 30;
+static TIMEOUT: u64 = 120;
 
 type Tx = mpsc::UnboundedSender<PokerEvent>;
 type Rx = mpsc::UnboundedReceiver<PokerEvent>;
@@ -235,11 +235,14 @@ impl Server {
                     winner: 1 - loser,
                     stacks: self.stacks,
                     pot: hand_state.pot(),
+                    hands: None,
+                    board: None,
                 },
             })
             .await;
         } else {
             while hand_state.round() != BettingRound::RIVER {
+                hand_state = hand_state.next_round();
                 self.deal_cards(&mut hand_state).await;
             }
             // find out who won
@@ -264,6 +267,11 @@ impl Server {
                     winner,
                     stacks: self.stacks,
                     pot: hand_state.pot(),
+                    hands: Some([
+                        hand_state.player(0).cards().to_owned(),
+                        hand_state.player(1).cards().to_owned(),
+                    ]),
+                    board: Some(hand_state.board().to_owned()),
                 },
             })
             .await;
@@ -327,7 +335,7 @@ impl Server {
                         from: self.addr,
                         event: PokerEventType::DealCards {
                             round: hand_state.round(),
-                            cards: hand_state.current_player().cards().to_vec(),
+                            cards: hand_state.player(0).cards().to_vec(),
                             n_cards: 2,
                         },
                     },
@@ -339,7 +347,7 @@ impl Server {
                         from: self.addr,
                         event: PokerEventType::DealCards {
                             round: hand_state.round(),
-                            cards: hand_state.other_player().cards().to_vec(),
+                            cards: hand_state.player(1).cards().to_vec(),
                             n_cards: 2,
                         },
                     },

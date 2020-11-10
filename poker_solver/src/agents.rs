@@ -9,10 +9,9 @@ use colored::Colorize;
 use futures::SinkExt;
 use rand::prelude::SliceRandom;
 use rand::{thread_rng, Rng};
-use std::time::Duration;
 
 use std::error::Error;
-use std::io::{self, BufRead};
+use std::io::BufRead;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -66,16 +65,18 @@ impl RandomAgent {
                 self.position = position;
             }
             PokerEventType::HandOver {
-                winner,
-                stacks,
-                pot,
+                winner: _,
+                stacks: _,
+                pot: _,
+                hands: _,
+                board: _,
             } => {
                 // idk do something
             }
             PokerEventType::DealCards {
                 round,
-                n_cards,
-                cards,
+                n_cards: _,
+                cards: _,
             } => {
                 if round != BettingRound::PREFLOP {
                     self.hand_state = self.hand_state.next_round();
@@ -86,7 +87,7 @@ impl RandomAgent {
                 // apply valid action
                 let action = self.random_action();
                 // send action to server
-                tokio::time::sleep(Duration::from_secs(3)).await;
+                // tokio::time::sleep(Duration::from_secs(3)).await;
                 self.codec
                     .send(PokerEvent {
                         from: self.addr,
@@ -96,10 +97,10 @@ impl RandomAgent {
             }
             PokerEventType::AlertAction {
                 action,
-                player,
-                pot,
-                stacks,
-                wagers,
+                player: _,
+                pot: _,
+                stacks: _,
+                wagers: _,
             } => {
                 self.hand_state = self.hand_state.apply_action(action);
             }
@@ -190,7 +191,7 @@ impl HumanAgent {
             } => {
                 self.hand_state = GameState::init_with_blinds(stacks, blinds, None);
                 self.position = position;
-                println!("---- Hand Starting ----");
+                println!("--------------Hand Starting------------");
                 println!("Blinds: {}, {}", blinds[0], blinds[1]);
                 println!(
                     "Hero stack: {} | Villan Stack: {}",
@@ -202,13 +203,28 @@ impl HumanAgent {
                 winner,
                 stacks,
                 pot,
+                hands,
+                board,
             } => {
-                println!("---- Hand Over ----");
+                println!("----------------Hand Over--------------");
                 match (winner, winner == self.position) {
                     (2, _) => println!("Tie!"),
                     (_, true) => println!("You win!"),
                     (_, false) => println!("You lose"),
                 };
+                if let Some(hands) = hands {
+                    println!(
+                        "Hero hand: {}",
+                        cards_to_str(&hands[usize::from(self.position)])
+                    );
+                    println!(
+                        "Villan hand: {}",
+                        cards_to_str(&hands[usize::from(1 - self.position)])
+                    );
+                }
+                if let Some(board) = board {
+                    println!("Board: {}", cards_to_str(&board));
+                }
                 println!("Pot: {}", pot);
                 println!(
                     "Hero stack: {} | Villan Stack: {}",
@@ -219,13 +235,13 @@ impl HumanAgent {
             }
             PokerEventType::DealCards {
                 round,
-                n_cards,
+                n_cards: _,
                 cards,
             } => {
                 if round != BettingRound::PREFLOP {
                     self.hand_state = self.hand_state.next_round();
                 }
-                println!("-------------------");
+                println!("---------------------------------------");
                 println!("Dealing: {}", round);
                 println!("Cards: {}", cards_to_str(&cards));
             }
@@ -248,7 +264,7 @@ impl HumanAgent {
                 wagers,
             } => {
                 self.hand_state = self.hand_state.apply_action(action);
-                println!("-------------------");
+                println!("---------------------------------------");
                 match player == self.position {
                     true => println!("Hero has chosen to {}", action),
                     false => println!("Villan has chosen to {}", action),
@@ -276,8 +292,8 @@ impl HumanAgent {
         let stdin = std::io::stdin();
         let mut is_action_valid = false;
 
-        println!("-------------------");
-        println!("Please select an action.");
+        println!("---------------------------------------");
+        println!("Please select an action");
 
         while !is_action_valid {
             is_action_valid = true;
@@ -325,7 +341,7 @@ impl HumanAgent {
                 let max_bet = self.hand_state.current_player().stack();
                 let min_bet = std::cmp::min(10, max_bet);
                 let mut bet_s = String::new();
-                println!("Input a bet size from ({}, {}): ", 1, max_bet);
+                println!("Input a bet size from ({}, {}): ", min_bet, max_bet);
                 stdin.lock().read_line(&mut bet_s).unwrap();
                 match bet_s.trim().parse::<u32>() {
                     Ok(num) => {

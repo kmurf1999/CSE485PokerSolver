@@ -1,4 +1,5 @@
 use crate::action::Action;
+use crate::card::Card;
 use crate::round::BettingRound;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
@@ -16,12 +17,14 @@ pub enum PokerEventType {
         winner: u8,
         stacks: [u32; 2],
         pot: u32,
+        hands: Option<[[Card; 2]; 2]>,
+        board: Option<[Card; 5]>,
     },
     /// Used to alert players what their cards are
     DealCards {
         round: BettingRound,
         n_cards: usize,
-        cards: Vec<u8>,
+        cards: Vec<Card>,
     },
     /// Used by the server to request that a player make a decision
     RequestAction,

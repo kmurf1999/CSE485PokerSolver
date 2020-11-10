@@ -121,7 +121,7 @@ impl<'a> TreeBuilder<'a> {
         if let GameNode::Action {
             index: _,
             actions,
-            player,
+            player: _,
         } = &mut self.tree.get_node_mut(parent).data
         {
             actions.push(action);
