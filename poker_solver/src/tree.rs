@@ -6,17 +6,19 @@ pub struct Tree<T> {
     nodes: Vec<Node<T>>,
 }
 
+pub type NodeIndex = usize;
+
 /// Node object for the tree
 ///
 /// Children is a list of node indices instead of pointers
 pub struct Node<T> {
     pub data: T,
-    pub parent: Option<usize>,
-    pub children: Vec<usize>,
+    pub parent: Option<NodeIndex>,
+    pub children: Vec<NodeIndex>,
 }
 
 impl<T> Node<T> {
-    pub fn add_child(&mut self, node_idx: usize) {
+    pub fn add_child(&mut self, node_idx: NodeIndex) {
         self.children.push(node_idx);
     }
 }
@@ -27,7 +29,7 @@ impl<T> Tree<T> {
         Tree { nodes: Vec::new() }
     }
     /// Add a new node into the tree
-    pub fn add_node(&mut self, parent: Option<usize>, data: T) -> usize {
+    pub fn add_node(&mut self, parent: Option<NodeIndex>, data: T) -> NodeIndex {
         let next_index = self.nodes.len();
         self.nodes.push(Node {
             parent,
@@ -36,10 +38,49 @@ impl<T> Tree<T> {
         });
         return next_index;
     }
-    pub fn get_node_mut(&mut self, node_idx: usize) -> &mut Node<T> {
+    pub fn get_node_mut(&mut self, node_idx: NodeIndex) -> &mut Node<T> {
+        assert!(node_idx < self.nodes.len());
         &mut self.nodes[node_idx]
     }
-    pub fn get_node(&self, node_idx: usize) -> &Node<T> {
+    pub fn get_node(&self, node_idx: NodeIndex) -> &Node<T> {
+        assert!(node_idx < self.nodes.len());
         &self.nodes[node_idx]
     }
+    /// Returns a preorder tree iterator
+    pub fn iter(&self) -> TreeIter<T> {
+        TreeIter::new(0, &self)
+    }
+}
+
+/// Preorder tree iterator
+pub struct TreeIter<'a, T> {
+    stack: Vec<NodeIndex>,
+    tree: &'a Tree<T>,
+}
+
+impl<'a, T> TreeIter<'a, T> {
+    pub fn new(root: NodeIndex, tree: &'a Tree<T>) -> Self {
+        TreeIter::<'a, T> {
+            stack: vec![root],
+            tree,
+        }
+    }
+}
+
+impl<'a, T> Iterator for TreeIter<'a, T> {
+    type Item = &'a Node<T>;
+    fn next(&mut self) -> Option<&'a Node<T>> {
+        while let Some(node_idx) = self.stack.pop() {
+            self.tree.get_node(node_idx).children.iter().for_each(|&n| {
+                self.stack.push(n);
+            });
+            return Some(self.tree.get_node(node_idx));
+        }
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
 }
