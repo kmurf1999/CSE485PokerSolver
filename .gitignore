@@ -1,6 +1,9 @@
-# don't clone build files
-**/target 
-
 # dont clone data files
 *.dat
 *.code-workspace
+
+# and build folder
+/build
+/target 
+# node modules
+/node_modules
