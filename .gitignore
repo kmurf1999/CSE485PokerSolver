@@ -3,7 +3,7 @@
 *.code-workspace
 
 # and build folder
-/build
-/target 
+build/
+target/
 # node modules
-/node_modules
+node_modules/
