@@ -14,7 +14,7 @@ use rust_poker::HandIndexer;
 /// Filename to save ehs table to
 const EHS_TABLE_FILENAME: &str = "EHS.dat";
 /// Number of cpu threads
-const N_THREADS: usize = 8;
+const N_THREADS: usize = 16;
 
 type Precision = f32;
 
@@ -50,7 +50,7 @@ fn generate_ehs_table() {
         let mut equity_table: Vec<Precision> = vec![0.0; num_hands];
         // spawn threads
         crossbeam::scope(|scope| {
-            for (j, slice) in equity_table.chunks_mut(num_hands).enumerate() {
+            for (j, slice) in equity_table.chunks_mut(size_per_thread).enumerate() {
                 scope.spawn(move |_| {
                     // setup thread variables
                     let mut board_mask: u64;
@@ -88,10 +88,10 @@ fn generate_ehs_table() {
                         // run sim
                         slice[k] = match i {
                             // preflop error is around 0.0-0.4%
-                            0 => calc_equity(&hand_ranges, board_mask, N_THREADS as u8, 100000)[0],
-                            1 => calc_equity(&hand_ranges, board_mask, N_THREADS as u8, 10000)[0],
-                            2 => calc_equity(&hand_ranges, board_mask, N_THREADS as u8, 5000)[0],
-                            3 => calc_equity(&hand_ranges, board_mask, N_THREADS as u8, 5000)[0],
+                            0 => calc_equity(&hand_ranges, board_mask, 4, 100000)[0],
+                            1 => calc_equity(&hand_ranges, board_mask, 2, 10000)[0],
+                            2 => calc_equity(&hand_ranges, board_mask, 1, 5000)[0],
+                            3 => calc_equity(&hand_ranges, board_mask, 1, 5000)[0],
                             _ => panic!("Invalid round"),
                         } as Precision;
                     }
