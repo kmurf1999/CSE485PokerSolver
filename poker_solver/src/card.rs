@@ -1,13 +1,13 @@
-use std::iter::FromIterator;
-
 use rust_poker::constants::{RANK_TO_CHAR, SUIT_TO_CHAR};
 use rust_poker::hand_evaluator::{evaluate, Hand, CARDS};
+use std::iter::FromIterator;
 
 /// use 8 bit integer to represent a playing card
 /// valid cards n: 0->51
 /// where n is 4 * rank + suit
 pub type Card = u8;
 
+/// Turns an array of cards into a human-readable string
 pub fn cards_to_str(cards: &[Card]) -> String {
     let mut chars: Vec<char> = Vec::new();
     cards.into_iter().filter(|c| **c < 52).for_each(|c| {
@@ -35,10 +35,10 @@ pub fn score_hand(board: &[Card], private_cards: &[Card]) -> u16 {
     return evaluate(&hand);
 }
 
-pub fn player_hand_score(private_cards: &[Card]) -> u16 {
-    let mut hand = Hand::empty();
-    private_cards.into_iter().for_each(|c| {
-        hand += CARDS[usize::from(*c)];
-    });
-    return evaluate(&hand);
-}
+// pub fn player_hand_score(private_cards: &[Card]) -> u16 {
+//     let mut hand = Hand::empty();
+//     private_cards.into_iter().for_each(|c| {
+//         hand += CARDS[usize::from(*c)];
+//     });
+//     return evaluate(&hand);
+// }

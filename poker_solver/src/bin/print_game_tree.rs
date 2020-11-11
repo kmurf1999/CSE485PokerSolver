@@ -47,5 +47,10 @@ fn main() {
         raise_sizes: [vec![], vec![], vec![], vec![1.0]],
     };
     let tree = TreeBuilder::build(&options);
+    // tree.iter().for_each(|n| match &n.data {
+    //     _ => {
+    //         println!("Node");
+    //     }
+    // });
     print_node(&tree, 0, 0);
 }
