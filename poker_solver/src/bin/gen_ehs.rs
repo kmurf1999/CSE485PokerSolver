@@ -101,7 +101,7 @@ fn generate_ehs_table() {
         .unwrap();
 
         // write round to file
-        file.write_vec_to_file(&equity_table).unwrap();
+        file.write_slice_to_file(&equity_table.as_slice()).unwrap();
         // print duration
         let duration = start_time.elapsed().as_millis();
         println!(
