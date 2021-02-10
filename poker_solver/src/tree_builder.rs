@@ -146,7 +146,7 @@ impl<'a> TreeBuilder<'a> {
                     value: state.pot(),
                 },
             );
-        } else if let Some(_) = state.player_all_in() {
+        } else if state.player_all_in().is_some() {
             node = self.tree.add_node(
                 Some(parent),
                 GameNode::Terminal {
