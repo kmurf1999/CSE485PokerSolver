@@ -504,6 +504,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "information_abstraction"
+version = "0.1.0"
+dependencies = [
+ "clap 3.0.0-beta.2",
+ "crossbeam",
+ "ndarray",
+ "rand",
+ "rust_poker",
+]
+
+[[package]]
 name = "instant"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
