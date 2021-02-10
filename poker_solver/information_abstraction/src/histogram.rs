@@ -1,16 +1,15 @@
-use ndarray::prelude::*;
 use crate::ehs::EHSReader;
+use ndarray::prelude::*;
+use ndarray::{Array2, Axis};
 use rand::distributions::Uniform;
 use rand::rngs::SmallRng;
-use std::time::Instant;
-use ndarray::{Array2, Axis};
-use std::fs::OpenOptions;
-use rust_poker::read_write::VecIO;
 use rand::{thread_rng, Rng, SeedableRng};
-use std::io::{self, Write};
+use rust_poker::read_write::VecIO;
 use std::error::Error;
 use std::fs::File;
-
+use std::fs::OpenOptions;
+use std::io::{self, Write};
+use std::time::Instant;
 
 fn get_bin(value: f32, bins: usize) -> usize {
     let interval = 1f32 / bins as f32;
@@ -27,13 +26,18 @@ fn get_bin(value: f32, bins: usize) -> usize {
 }
 
 /// Generates Expected Hand Strength (EHS) histograms
-/// 
+///
 /// # Arguments
 /// * `n_threads` number of cpus threads to use
 /// * `round` round to generate histograms for (0 -> preflop, 4 -> river)
 /// * `dim` number of buckets per histogram
 /// * `n_samples` number of samples per histogram
-pub fn generate_ehs_histograms(n_threads: usize, round: usize, dim: usize, n_samples: usize) -> Result<(), Box<dyn Error>> {
+pub fn generate_ehs_histograms(
+    n_threads: usize,
+    round: usize,
+    dim: usize,
+    n_samples: usize,
+) -> Result<(), Box<dyn Error>> {
     let start_time = Instant::now();
 
     println!(
@@ -113,7 +117,6 @@ pub fn generate_ehs_histograms(n_threads: usize, round: usize, dim: usize, n_sam
     println!("done. took {}ms", duration);
     Ok(())
 }
-
 /// Reads histogram data from file and returns a 2D array
 ///
 /// # Arguments

@@ -24,11 +24,11 @@ impl fmt::Display for BettingRound {
 
 impl From<BettingRound> for usize {
     fn from(round: BettingRound) -> Self {
-        return match round {
+        match round {
             BettingRound::PREFLOP => 0,
             BettingRound::FLOP => 1,
             BettingRound::TURN => 2,
             BettingRound::RIVER => 3,
-        };
+        }
     }
 }

@@ -1,19 +1,12 @@
-use std::convert::TryInto;
-use std::fs::File;
-use std::io::prelude::*;
-use std::io::BufReader;
-use std::io::Error;
-use std::io::SeekFrom;
-use std::mem::size_of;
-use std::fs::OpenOptions;
-use std::io;
-use std::io::Write; // <--- bring flush() into scope
-use std::time::Instant;
-
 use rust_poker::equity_calculator::calc_equity;
 use rust_poker::hand_range::{Combo, HandRange};
 use rust_poker::read_write::VecIO;
 use rust_poker::HandIndexer;
+use std::convert::TryInto;
+use std::fs::{File, OpenOptions};
+use std::io::{self, prelude::*, BufReader, Error, SeekFrom, Write};
+use std::mem::size_of;
+use std::time::Instant;
 
 /// Filename to save ehs table to
 const EHS_TABLE_FILENAME: &str = "EHS.dat";
@@ -61,7 +54,7 @@ pub fn generate_ehs_table(n_threads: usize) {
                     let mut cards: Vec<u8> = vec![0; cards_per_round[i]];
                     for k in 0..slice.len() {
                         // print progress to console every so often
-                        if (j == 0) && (k & 0xfff == 0) {
+                        if (j == 0) && (k.trailing_zeros() >= 12) {
                             print!(
                                 "round {}: {:.3}% \r",
                                 i,

@@ -10,7 +10,7 @@ pub type Card = u8;
 /// Turns an array of cards into a human-readable string
 pub fn cards_to_str(cards: &[Card]) -> String {
     let mut chars: Vec<char> = Vec::new();
-    cards.into_iter().filter(|c| **c < 52).for_each(|c| {
+    cards.iter().filter(|c| **c < 52).for_each(|c| {
         chars.push(RANK_TO_CHAR[usize::from(*c >> 2)]);
         chars.push(SUIT_TO_CHAR[usize::from(*c & 3)]);
     });
@@ -32,7 +32,7 @@ pub fn score_hand(board: &[Card], private_cards: &[Card]) -> u16 {
     private_cards.into_iter().for_each(|c| {
         hand += CARDS[usize::from(*c)];
     });
-    return evaluate(&hand);
+    evaluate(&hand)
 }
 
 // pub fn player_hand_score(private_cards: &[Card]) -> u16 {

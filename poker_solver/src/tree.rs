@@ -36,7 +36,7 @@ impl<T> Tree<T> {
             children: Vec::new(),
             data,
         });
-        return next_index;
+        next_index
     }
     pub fn get_node_mut(&mut self, node_idx: NodeIndex) -> &mut Node<T> {
         assert!(node_idx < self.nodes.len());
@@ -70,7 +70,7 @@ impl<'a, T> TreeIter<'a, T> {
 impl<'a, T> Iterator for TreeIter<'a, T> {
     type Item = &'a Node<T>;
     fn next(&mut self) -> Option<&'a Node<T>> {
-        while let Some(node_idx) = self.stack.pop() {
+        if let Some(node_idx) = self.stack.pop() {
             self.tree.get_node(node_idx).children.iter().for_each(|&n| {
                 self.stack.push(n);
             });
@@ -80,7 +80,7 @@ impl<'a, T> Iterator for TreeIter<'a, T> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-}
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+// }
