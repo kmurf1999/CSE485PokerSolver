@@ -1,29 +1,16 @@
 use ndarray::prelude::*;
-use poker_solver::ehs_reader::EHSReader;
+use crate::ehs::EHSReader;
 use rand::distributions::Uniform;
-
 use rand::rngs::SmallRng;
 use std::time::Instant;
-
 use ndarray::{Array2, Axis};
 use std::fs::OpenOptions;
-
 use rust_poker::read_write::VecIO;
-
-use clap::Clap;
 use rand::{thread_rng, Rng, SeedableRng};
-use std::io;
-use std::io::Write;
+use std::io::{self, Write};
+use std::error::Error;
+use std::fs::File;
 
-#[derive(Clap)]
-#[clap(version = "1.0", author = "Kyle <kmurf1999@gmail.com>")]
-struct Opts {
-    #[clap(short, long, default_value = "4")]
-    n_threads: usize,
-    round: usize,
-    dim: usize,
-    n_samples: usize,
-}
 
 fn get_bin(value: f32, bins: usize) -> usize {
     let interval = 1f32 / bins as f32;
@@ -39,22 +26,21 @@ fn get_bin(value: f32, bins: usize) -> usize {
     return 0;
 }
 
-/// Generates a dataset to run a hand clustering algorithm on
-fn main() {
-    let opts: Opts = Opts::parse();
-    assert!(opts.round < 5);
-
-    // Args
-    let n_threads = opts.n_threads;
-    let round = opts.round; // preflop
-    let dim = opts.dim; // dimension of data (# of bins in each histogram)
-    let n_samples = opts.n_samples;
-    //
+/// Generates Expected Hand Strength (EHS) histograms
+/// 
+/// # Arguments
+/// * `n_threads` number of cpus threads to use
+/// * `round` round to generate histograms for (0 -> preflop, 4 -> river)
+/// * `dim` number of buckets per histogram
+/// * `n_samples` number of samples per histogram
+pub fn generate_ehs_histograms(n_threads: usize, round: usize, dim: usize, n_samples: usize) -> Result<(), Box<dyn Error>> {
     let start_time = Instant::now();
+
     println!(
         "Generating histograms for round: {}, n_samples: {}, dim: {}",
         round, n_samples, dim
     );
+
     // create file
     let mut file = OpenOptions::new()
         .write(true)
@@ -122,8 +108,26 @@ fn main() {
     })
     .unwrap();
 
-    file.write_slice_to_file(&dataset.as_slice().unwrap())
-        .unwrap();
+    file.write_slice_to_file(&dataset.as_slice().unwrap())?;
     let duration = start_time.elapsed().as_millis();
-    println!("done. took {}ms", duration,);
+    println!("done. took {}ms", duration);
+    Ok(())
+}
+
+/// Reads histogram data from file and returns a 2D array
+///
+/// # Arguments
+/// * `round` the round of data to be read (0 is preflop, 4 is river)
+/// * `dim` the dimension of the historgram (number of bins)
+/// * `n_samples` the number of samples per histogram
+pub fn read_ehs_histograms(
+    round: usize,
+    dim: usize,
+    n_samples: usize,
+) -> Result<Array2<f32>, Box<dyn Error>> {
+    let mut file = File::open(format!("hist-r{}-d{}-s{}.dat", round, dim, n_samples))?;
+    let flat_data = file.read_vec_from_file::<f32>()?;
+    // TODO handle shape error instead
+    let data = Array2::from_shape_vec((flat_data.len() / dim, dim), flat_data)?;
+    Ok(data)
 }

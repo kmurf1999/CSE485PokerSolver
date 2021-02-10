@@ -6,6 +6,11 @@ edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[workspace]
+members = [
+    "information_abstraction"
+]
+
 [build]
 rustflags = ["-C", "target-cpu=native"]
 
@@ -22,5 +27,5 @@ serde = { version = "1.0", features = ["derive"] }
 tokio-util = { version = "0.5.0", features = ["full"] }
 tokio = { version = "0.3.0", features = ["full", "tracing"] }
 futures = "0.3.0"
-clap = "3.0.0-beta.2" 
+clap = "3.0.0-beta.2"
 ndarray = { version = "0.13.1", features = ["rayon"] }
