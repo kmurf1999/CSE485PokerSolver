@@ -1,5 +1,6 @@
+use information_abstraction::distance::emd;
 use information_abstraction::histogram::read_ehs_histograms;
-use information_abstraction::kmeans::Kmeans;
+use information_abstraction::kmeans::{Kmeans, VanillaKmeans};
 use ndarray::prelude::*;
 use rust_poker::constants::{RANK_TO_CHAR, SUIT_TO_CHAR};
 use rust_poker::HandIndexer;
@@ -22,17 +23,17 @@ fn main() {
     let k = 8;
     let indexer = HandIndexer::init(2, [2, 4].to_vec());
 
-    let (mut classifier, _) = Kmeans::init_pp(k, &dataset, 200, true);
+    let mut classifier = VanillaKmeans::init_pp(k, &dataset, &emd, 200, true);
     // println!("intra_cluster_dist: {}", intra_cluster_dist);
-    let _ = classifier.run(&dataset, 100);
+    let _ = classifier.run(&dataset, &emd, 100);
     // println!("inertia: {},", inertia);
 
     let mut ranges = vec![String::new(); k];
     let mut cards = [0u8; 2];
     for i in 0usize..169 {
         indexer.get_hand(0, i as u64, &mut cards);
-        ranges[classifier.cluster_assignments[i]] += cards_to_str(&cards).as_str();
-        ranges[classifier.cluster_assignments[i]] += ",";
+        ranges[classifier.assignments[i]] += cards_to_str(&cards).as_str();
+        ranges[classifier.assignments[i]] += ",";
     }
 
     for i in 0..k {
