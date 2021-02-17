@@ -3,6 +3,7 @@ use ndarray::prelude::*;
 use rand::distributions::{Distribution, WeightedIndex};
 use rand::rngs::SmallRng;
 use rand::{thread_rng, Rng, SeedableRng};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use std::io::{self, Write};
 use std::sync::Mutex;
@@ -69,13 +70,15 @@ pub trait Kmeans {
 
         let n_data = dataset.len_of(Axis(0));
         let dim = dataset.len_of(Axis(1));
+        let counter = AtomicU32::new(0);
 
         let min_intra_center_dist = Mutex::new(f32::MAX);
         let final_cluster_centers = Mutex::new(Array2::zeros((k, dim)));
 
-        (0..n_restarts).into_par_iter().for_each(|restart| {
+        (0..n_restarts).into_par_iter().for_each(|_| {
+            let c = counter.fetch_add(1, Ordering::SeqCst);
             if verbose {
-                print!("restart: {}\r", restart);
+                print!("restart: {}\r", c);
                 io::stdout().flush().unwrap();
             }
             let mut rng = SmallRng::from_entropy();
@@ -378,6 +381,13 @@ impl Kmeans for VanillaKmeans {
         max_iterations: usize,
         verbose: bool,
     ) -> f32 {
+        let start_time = Instant::now();
+        if verbose {
+            println!(
+                "starting Vanilla K-means. max iterations: {}",
+                max_iterations
+            );
+        }
         self.n_data = dataset.len_of(Axis(0));
         self.dim = dataset.len_of(Axis(1));
         // initialize assignments
@@ -396,6 +406,10 @@ impl Kmeans for VanillaKmeans {
             if changed == 0 {
                 break;
             }
+        }
+        if verbose {
+            let duration = start_time.elapsed().as_millis();
+            println!("done. took {}ms", duration);
         }
         final_inertia
     }

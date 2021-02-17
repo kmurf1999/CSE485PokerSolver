@@ -21,25 +21,25 @@ fn main() {
     let n_samples = 10000;
     let dataset = read_ehs_histograms(round, dim, n_samples).unwrap();
     let k = 8;
-    let indexer = HandIndexer::init(2, [2, 4].to_vec());
+    let indexer = HandIndexer::init(1, [2].to_vec());
 
-    let mut classifier = HammerlyKmeans::init_pp(k, &dataset, &distance::emd, 50, false);
+    let mut classifier = HammerlyKmeans::init_pp(k, &dataset, &distance::emd, 200, false);
     // println!("intra_cluster_dist: {}", intra_cluster_dist);
     let inertia = classifier.run(&dataset, &distance::emd, 100, true);
     println!("inertia: {},", inertia);
     // vanilla average with emd 416.81
     // hammerly average with emd 413.1409
 
-    // let mut ranges = vec![String::new(); k];
-    // let mut cards = [0u8; 2];
-    // for i in 0usize..169 {
-    //     indexer.get_hand(0, i as u64, &mut cards);
-    //     ranges[classifier.assignments[i]] += cards_to_str(&cards).as_str();
-    //     ranges[classifier.assignments[i]] += ",";
-    // }
+    let mut ranges = vec![String::new(); k];
+    let mut cards = [0u8; 2];
+    for i in 0usize..169 {
+        indexer.get_hand(0, i as u64, &mut cards);
+        ranges[classifier.assignments[i]] += cards_to_str(&cards).as_str();
+        ranges[classifier.assignments[i]] += ",";
+    }
 
-    // for i in 0..k {
-    //     // println!("");
-    //     println!("\"{}\",", ranges[i]);
-    // }
+    for i in 0..k {
+        // println!("");
+        println!("\"{}\",", ranges[i]);
+    }
 }
