@@ -8,6 +8,18 @@ use std::io::{self, Write};
 use std::sync::Mutex;
 use std::time::Instant;
 
+macro_rules! max {
+    ($x: expr) => ($x);
+    ($x: expr, $($z: expr),+) => {{
+        let y = max!($($z),*);
+        if $x > y {
+            $x
+        } else {
+            y
+        }
+    }}
+}
+
 pub trait Kmeans {
     fn init_random(
         k: usize,
@@ -30,6 +42,7 @@ pub trait Kmeans {
         dataset: &Array2<f32>,
         dist_func: &'static (dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
         max_iterations: usize,
+        verbose: bool,
     ) -> f32;
     /// Initialize k cluster centers randomly with n restarts
     /// returns an initialized Kmeans object and the sum of the squared minimum intra center distance
@@ -241,7 +254,7 @@ impl VanillaKmeans {
         self.assignments = assignments;
     }
 
-    fn move_clusters(&mut self) {
+    fn move_centers(&mut self) {
         // parallel
         let center_sums = &self.center_sums;
         let center_counts = &self.center_counts;
@@ -363,17 +376,23 @@ impl Kmeans for VanillaKmeans {
         dataset: &Array2<f32>,
         dist_func: &'static (dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
         max_iterations: usize,
+        verbose: bool,
     ) -> f32 {
         self.n_data = dataset.len_of(Axis(0));
         self.dim = dataset.len_of(Axis(1));
         // initialize assignments
         self.initialize_assignments(dataset, dist_func);
         let mut final_inertia = 0f32;
-        for _ in 0..max_iterations {
-            self.move_clusters();
+        for iteration in 0..max_iterations {
+            self.move_centers();
             let (changed, inertia) = self.reassign_clusters(dataset, dist_func);
             final_inertia = inertia;
-            println!("{}, {}", inertia, changed);
+            if verbose {
+                println!(
+                    "iteration: {}, inertia: {}, changed: {}",
+                    iteration, inertia, changed
+                );
+            }
             if changed == 0 {
                 break;
             }
@@ -399,6 +418,297 @@ pub struct HammerlyKmeans {
     center_counts: Vec<f32>,
     /// the sum of each datapoint in cluster i
     center_sums: Array2<f32>,
+    /// how much each center has moved during the last iteration
+    center_movements: Vec<f32>,
+    /// lower comparison bounds
+    lower_bounds: Vec<f32>,
+    /// upper comparison bounds
+    upper_bounds: Vec<f32>,
+    /// minimum inter center dist / 2
+    s: Vec<f32>,
+}
+
+impl Kmeans for HammerlyKmeans {
+    /// Initialize Vanilla K-Means with random center initializations
+    fn init_random(
+        k: usize,
+        dataset: &Array2<f32>,
+        dist_func: &'static (dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
+        n_restarts: usize,
+        verbose: bool,
+    ) -> Self {
+        let dim = dataset.len_of(Axis(1));
+        let n_data = dataset.len_of(Axis(0));
+        let (centers, inertia) =
+            Self::init_centers_random(k, dataset, dist_func, n_restarts, verbose);
+        HammerlyKmeans {
+            k,
+            dim,
+            n_data,
+            assignments: Vec::new(),
+            centers,
+            center_sums: Array2::zeros((k, dim)),
+            center_counts: vec![0f32; k],
+            center_movements: Vec::new(),
+            s: Vec::new(),
+            lower_bounds: Vec::new(),
+            upper_bounds: Vec::new(),
+        }
+    }
+    /// Initialize Vanilla K-Means using the K-Means++ initialization procedure
+    fn init_pp(
+        k: usize,
+        dataset: &Array2<f32>,
+        dist_func: &'static (dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
+        n_restarts: usize,
+        verbose: bool,
+    ) -> Self {
+        let dim = dataset.len_of(Axis(1));
+        let n_data = dataset.len_of(Axis(0));
+        let (centers, _) = Self::init_centers_pp(k, dataset, dist_func, n_restarts, verbose);
+        HammerlyKmeans {
+            k,
+            dim,
+            n_data,
+            assignments: Vec::new(),
+            centers,
+            center_sums: Array2::zeros((k, dim)),
+            center_counts: vec![0f32; k],
+            center_movements: Vec::new(),
+            s: Vec::new(),
+            lower_bounds: Vec::new(),
+            upper_bounds: Vec::new(),
+        }
+    }
+    fn run(
+        &mut self,
+        dataset: &Array2<f32>,
+        dist_func: &'static (dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
+        max_iterations: usize,
+        verbose: bool,
+    ) -> f32 {
+        let start_time = Instant::now();
+        if verbose {
+            println!(
+                "starting Hammery K-means. max iterations: {}",
+                max_iterations
+            );
+        }
+        self.n_data = dataset.len_of(Axis(0));
+        self.dim = dataset.len_of(Axis(1));
+        self.lower_bounds = vec![0f32; self.n_data];
+        self.upper_bounds = vec![f32::MAX; self.n_data];
+        self.center_movements = vec![0f32; self.k];
+        self.assignments = vec![0usize; self.n_data];
+        self.s = vec![0f32; self.n_data];
+
+        self.update_s(dist_func);
+        self.assignments = self.update_assignments(dataset, dist_func);
+        for i in 0..self.n_data {
+            self.center_counts[self.assignments[i]] += 1.0;
+            self.center_sums
+                .slice_mut(s![self.assignments[i], ..])
+                .scaled_add(1.0, &dataset.slice(s![i, ..]));
+        }
+
+        for iteration in 0..max_iterations {
+            if iteration > 0 {
+                self.update_s(dist_func);
+            }
+            let new_assignments = self.update_assignments(dataset, dist_func);
+            let mut changed = 0;
+            for i in 0..self.n_data {
+                if new_assignments[i] != self.assignments[i] {
+                    let datapoint = dataset.slice(s![i, ..]);
+                    // remove old cluster and update new
+                    self.center_counts[self.assignments[i]] -= 1.0;
+                    self.center_counts[new_assignments[i]] += 1.0;
+                    // remove old cluster sum and update new
+                    self.center_sums
+                        .slice_mut(s![self.assignments[i], ..])
+                        .scaled_add(-1.0, &datapoint);
+                    self.center_sums
+                        .slice_mut(s![new_assignments[i], ..])
+                        .scaled_add(1.0, &datapoint);
+                    // assign new cluster
+                    self.assignments[i] = new_assignments[i];
+                    // increment changed
+                    changed += 1;
+                }
+            }
+            if verbose {
+                let inertia: f32 = (0..self.n_data)
+                    .into_iter()
+                    .map(|i| {
+                        dist_func(
+                            &dataset.slice(s![i, ..]),
+                            &self.centers.slice(s![self.assignments[i], ..]),
+                        )
+                    })
+                    .map(|d| d * d)
+                    .sum();
+                println!(
+                    "iteration: {}, inertia: {}, changed: {}",
+                    iteration, inertia, changed
+                );
+            }
+
+            self.move_centers(dist_func);
+
+            let furthest_moving_center = self.update_bounds();
+            if furthest_moving_center == 0.0 {
+                break;
+            }
+        }
+        if verbose {
+            let duration = start_time.elapsed().as_millis();
+            println!("done. took {}ms", duration);
+        }
+        // return inertia
+        (0..self.n_data)
+            .into_par_iter()
+            .map(|i| {
+                dist_func(
+                    &dataset.slice(s![i, ..]),
+                    &self.centers.slice(s![self.assignments[i], ..]),
+                )
+            })
+            .map(|d| d * d)
+            .sum()
+    }
+}
+
+impl HammerlyKmeans {
+    fn update_s(
+        &mut self,
+        dist_func: &'static (dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
+    ) {
+        let mut s = vec![f32::MAX; self.k];
+        s.par_iter_mut().enumerate().for_each(|(i, si)| {
+            *si = f32::MAX;
+            for j in 0..self.k {
+                if i == j {
+                    continue;
+                }
+                let dist = dist_func(
+                    &self.centers.slice(s![i, ..]),
+                    &self.centers.slice(s![j, ..]),
+                );
+                if dist < *si {
+                    *si = dist;
+                }
+            }
+            *si /= 2.0;
+        });
+        self.s = s;
+    }
+    fn move_centers(
+        &mut self,
+        dist_func: &'static (dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
+    ) {
+        let center_sums = &self.center_sums;
+        let center_counts = &self.center_counts;
+        self.center_movements = self
+            .centers
+            .axis_iter_mut(Axis(0))
+            .into_par_iter()
+            .enumerate()
+            .map(|(i, mut center)| {
+                let mut new_center = center_sums.slice(s![i, ..]).to_owned();
+                new_center /= center_counts[i];
+                let dist = dist_func(&center.view(), &new_center.view());
+                center.assign(&new_center);
+                dist
+            })
+            .collect();
+    }
+    fn update_assignments(
+        &mut self,
+        dataset: &Array2<f32>,
+        dist_func: &'static (dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
+    ) -> Vec<usize> {
+        let s = &self.s;
+        let centers = &self.centers;
+        let k = self.k;
+        let mut new_assignments = self.assignments.to_owned();
+        new_assignments
+            .par_iter_mut()
+            .zip(self.upper_bounds.par_iter_mut())
+            .zip(self.lower_bounds.par_iter_mut())
+            .enumerate()
+            .for_each(|(i, ((ai, ui), li))| {
+                let mut closest = *ai;
+                let upper_comp_bound = max!(s[closest], *li);
+                if *ui <= upper_comp_bound {
+                    return;
+                }
+                *ui = dist_func(&dataset.slice(s![i, ..]), &centers.slice(s![closest, ..]));
+                if *ui <= upper_comp_bound {
+                    return;
+                }
+
+                let mut lower = f32::MAX;
+                let mut upper = *ui;
+                for j in 0..k {
+                    if j == closest {
+                        continue;
+                    }
+                    let dist = dist_func(&dataset.slice(s![i, ..]), &centers.slice(s![j, ..]));
+                    if dist < upper {
+                        lower = upper;
+                        upper = dist;
+                        closest = j;
+                    } else if dist < lower {
+                        lower = dist;
+                    }
+                }
+                *li = lower;
+                if *ai != closest {
+                    *ai = closest;
+                    *ui = upper;
+                }
+            });
+        new_assignments
+    }
+    fn update_bounds(&mut self) -> f32 {
+        let assignments = &self.assignments;
+        let center_movements = &self.center_movements;
+        let mut furthest_moving_center = 0;
+        let mut longest = center_movements[0];
+        let mut second_longest = if 1 < self.k {
+            center_movements[1]
+        } else {
+            center_movements[0]
+        };
+        if longest < second_longest {
+            furthest_moving_center = 1;
+            std::mem::swap(&mut longest, &mut second_longest);
+        }
+        // we could parlellize this, but it probably wouldn't result in a practical difference
+        for i in 2..self.k {
+            if longest < center_movements[i] {
+                second_longest = longest;
+                longest = center_movements[i];
+                furthest_moving_center = i;
+            } else if second_longest < center_movements[i] {
+                second_longest = center_movements[i];
+            }
+        }
+        // update lower/upper bounds
+        self.upper_bounds
+            .par_iter_mut()
+            .zip(self.lower_bounds.par_iter_mut())
+            .enumerate()
+            .for_each(|(i, (ui, li))| {
+                *ui += center_movements[assignments[i]];
+                *li -= if assignments[i] == furthest_moving_center {
+                    second_longest
+                } else {
+                    longest
+                };
+            });
+        longest
+    }
 }
 
 #[cfg(test)]
@@ -409,21 +719,35 @@ mod tests {
     use test::Bencher;
 
     #[bench]
-    // test kmeans::tests::bench_run         ... bench:   1,959,121 ns/iter (+/- 696,657)
-    fn bench_run(b: &mut Bencher) {
+    // test kmeans::tests::bench_run_hamerly ... bench:   1,136,503 ns/iter (+/- 431,214)
+    fn bench_run_hamerly(b: &mut Bencher) {
         let round = 0;
         let dim = 50;
         let n_samples = 10000;
         let dataset = read_ehs_histograms(round, dim, n_samples).unwrap();
         let k = 8;
         b.iter(|| {
-            let mut classifier = VanillaKmeans::init_random(k, &dataset, &distance::emd, 1, false);
-            classifier.run(&dataset, &distance::emd, 100);
+            let mut classifier = HammerlyKmeans::init_pp(k, &dataset, &distance::l2, 5, false);
+            classifier.run(&dataset, &distance::l2, 100, false);
         });
     }
 
     #[bench]
-    // test kmeans::tests::bench_init_random ... bench:     187,293 ns/iter (+/- 16,493)
+    // test kmeans::tests::bench_run_vanilla ... bench:   2,264,285 ns/iter (+/- 396,407)
+    fn bench_run_vanilla(b: &mut Bencher) {
+        let round = 0;
+        let dim = 50;
+        let n_samples = 10000;
+        let dataset = read_ehs_histograms(round, dim, n_samples).unwrap();
+        let k = 8;
+        b.iter(|| {
+            let mut classifier = VanillaKmeans::init_pp(k, &dataset, &distance::emd, 5, false);
+            classifier.run(&dataset, &distance::emd, 100, false);
+        });
+    }
+
+    #[bench]
+    // test kmeans::tests::bench_init_random ... bench:     158,621 ns/iter (+/- 46,321)
     fn bench_init_random(b: &mut Bencher) {
         let round = 0;
         let dim = 50;
@@ -436,7 +760,7 @@ mod tests {
     }
 
     #[bench]
-    // test kmeans::tests::bench_init_pp     ... bench:     417,163 ns/iter (+/- 222,699)
+    // test kmeans::tests::bench_init_pp     ... bench:     234,234 ns/iter (+/- 44,765)
     fn bench_init_pp(b: &mut Bencher) {
         let round = 0;
         let dim = 50;
