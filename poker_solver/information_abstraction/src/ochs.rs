@@ -34,7 +34,7 @@ fn cards_to_str(cards: &[u8]) -> String {
     out
 }
 
-pub fn gen_ochs_vectors(round: u8, sim_count: u64) -> Array2<f32> {
+pub fn gen_ochs_features(round: u8, sim_count: u64) -> Array2<f32> {
     let start_time = Instant::now();
     println!(
         "Generating ochs vectors for round: {}, sim_count: {}",

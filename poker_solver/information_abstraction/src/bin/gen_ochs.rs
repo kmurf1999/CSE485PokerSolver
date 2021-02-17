@@ -1,6 +1,6 @@
 use clap::Clap;
 
-use information_abstraction::ochs::gen_ochs_vectors;
+use information_abstraction::ochs::gen_ochs_features;
 use rust_poker::read_write::VecIO;
 use std::error::Error;
 use std::fs::OpenOptions;
@@ -25,11 +25,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         .write(true)
         .create_new(true)
         .open(format!(
-            "ochs-vectors-r{}-s{}.dat",
+            "ochs-features-r{}-s{}.dat",
             opts.round, opts.sim_count
         ))?;
 
-    let vectors = gen_ochs_vectors(opts.round, opts.sim_count);
+    let vectors = gen_ochs_features(opts.round, opts.sim_count);
 
     file.write_slice_to_file(&vectors.as_slice().unwrap())?;
     Ok(())
