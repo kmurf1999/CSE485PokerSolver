@@ -18,8 +18,7 @@ pub fn cards_to_str(cards: &[u8]) -> String {
 fn main() {
     let round = 0;
     let dim = 50;
-    let n_samples = 10000;
-    let dataset = read_ehs_histograms(round, dim, n_samples).unwrap();
+    let dataset = read_ehs_histograms(round, dim).unwrap();
     let k = 8;
     let indexer = HandIndexer::init(1, [2].to_vec());
 

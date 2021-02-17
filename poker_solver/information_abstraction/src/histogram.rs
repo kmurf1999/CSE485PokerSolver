@@ -1,16 +1,16 @@
 use crate::ehs::EHSReader;
-use ndarray::prelude::*;
+use itertools::Itertools;
+use ndarray::parallel::prelude::*;
+use std::sync::atomic::{AtomicU32, Ordering};
+
 use ndarray::{Array2, Axis};
-use rand::distributions::Uniform;
-use rand::rngs::SmallRng;
-use rand::{thread_rng, Rng, SeedableRng};
 use rust_poker::read_write::VecIO;
 use std::error::Error;
 use std::fs::File;
-use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::time::Instant;
 
+#[inline(always)]
 fn get_bin(value: f32, bins: usize) -> usize {
     let interval = 1f32 / bins as f32;
     let mut bin = bins - 1;
@@ -22,100 +22,76 @@ fn get_bin(value: f32, bins: usize) -> usize {
         bin -= 1;
         threshold -= interval;
     }
-    return 0;
+    0
 }
 
 /// Generates Expected Hand Strength (EHS) histograms
 ///
 /// # Arguments
-/// * `n_threads` number of cpus threads to use
 /// * `round` round to generate histograms for (0 -> preflop, 4 -> river)
 /// * `dim` number of buckets per histogram
-/// * `n_samples` number of samples per histogram
-pub fn generate_ehs_histograms(
-    n_threads: usize,
-    round: usize,
-    dim: usize,
-    n_samples: usize,
-) -> Result<(), Box<dyn Error>> {
+pub fn generate_ehs_histograms(round: usize, dim: usize) -> Result<Array2<f32>, Box<dyn Error>> {
     let start_time = Instant::now();
 
-    println!(
-        "Generating histograms for round: {}, n_samples: {}, dim: {}",
-        round, n_samples, dim
-    );
+    println!("Generating histograms for round: {}, dim: {}", round, dim);
 
-    // create file
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(format!("hist-r{}-d{}-s{}.dat", round, dim, n_samples))
-        .unwrap();
     // Setup
     let cards_per_round = [2, 5, 6, 7];
-    let mut thread_rng = thread_rng();
-    let card_dist: Uniform<u8> = Uniform::from(0..52); // for faster sampling
     let ehs_reader = EHSReader::new().unwrap();
     let round_size = ehs_reader.indexers[round].size(if round > 0 { 1 } else { 0 }) as usize;
-    let size_per_thread = round_size / n_threads;
+    let counter = AtomicU32::new(0);
     // dataset to generate
     let mut dataset = Array2::<f32>::zeros((round_size, dim));
-    crossbeam::scope(|scope| {
-        for (i, mut slice) in dataset
-            .axis_chunks_iter_mut(Axis(0), size_per_thread)
-            .enumerate()
-        {
-            let ehs_reader = EHSReader::new().unwrap();
-            let mut rng = SmallRng::from_rng(&mut thread_rng).unwrap();
+    dataset
+        .axis_iter_mut(Axis(0))
+        .into_par_iter()
+        .enumerate()
+        .for_each(|(i, mut hist)| {
+            let count = counter.fetch_add(1, Ordering::SeqCst);
+
+            if round == 0 || i.trailing_zeros() >= 12 {
+                println!("{:.3}% \r", count as f32 / round_size as f32);
+                io::stdout().flush().unwrap();
+            }
+
             let mut cards = vec![52u8; 7];
-            scope.spawn(move |_| {
-                for j in 0..slice.len_of(Axis(0)) {
-                    let mut hist = slice.slice_mut(s![j, ..]);
-                    if (i == 0) && (j & 0xff == 0) {
-                        print!("{:.3}% \r", (100 * j) as f32 / size_per_thread as f32);
-                        io::stdout().flush().unwrap();
+            // let mut cards = vec![52u8; cards_per_round[round + 1]];
+            // get initial cards
+            ehs_reader.indexers[round].get_hand(
+                if round == 0 { 0 } else { 1 },
+                i as u64,
+                &mut cards,
+            );
+            // generate hand mask for sampling
+            let mut hand_mask = 0u64;
+            for j in 0..cards_per_round[round] {
+                hand_mask |= 1u64 << cards[j];
+            }
+            // iterate over all posible next card combinations (or next 3 cards if round == 0)
+            let mut count = 0f32;
+            (0..52)
+                .combinations(7 - cards_per_round[round])
+                .for_each(|combo| {
+                    let mut combo_mask = 0u64;
+                    for c in &combo {
+                        combo_mask |= 1u64 << c;
                     }
-                    let index = ((i * size_per_thread) + j) as u64;
-                    ehs_reader.indexers[round].get_hand(
-                        if round == 0 { 0 } else { 1 },
-                        index,
-                        cards.as_mut_slice(),
-                    );
-                    // build card mask for rejection sampling
-                    let mut card_mask: u64 = 0;
-                    for k in 0..cards_per_round[round] {
-                        card_mask |= 1u64 << cards[k];
+                    if (combo_mask & hand_mask) != 0 {
+                        return;
                     }
-                    // create histogram
-                    for _ in 0..n_samples {
-                        // fill remaining board cards
-                        let mut c_mask = card_mask;
-                        for k in cards_per_round[round]..7 {
-                            loop {
-                                cards[k] = rng.sample(card_dist);
-                                if (c_mask & 1u64 << cards[k]) == 0 {
-                                    c_mask |= 1u64 << cards[k];
-                                    break;
-                                }
-                            }
-                        }
-                        // get ehs and add to histogram
-                        let ehs = ehs_reader.get_ehs(cards.as_slice(), 3).unwrap();
+                    for j in 0..combo.len() {
+                        cards[cards_per_round[round] + j] = combo[j];
+                    }
+                    let ehs = ehs_reader.get_ehs(&cards, 3).unwrap();
+                    hist[get_bin(ehs, dim)] += 1.0;
+                    count += 1.0;
+                });
+            hist /= count;
+        });
 
-                        hist[get_bin(ehs, dim)] += 1f32;
-                    }
-                    // normalize histogram
-                    hist /= n_samples as f32;
-                }
-            });
-        }
-    })
-    .unwrap();
-
-    file.write_slice_to_file(&dataset.as_slice().unwrap())?;
     let duration = start_time.elapsed().as_millis();
     println!("done. took {}ms", duration);
-    Ok(())
+    Ok(dataset)
 }
 /// Reads histogram data from file and returns a 2D array
 ///
@@ -123,14 +99,24 @@ pub fn generate_ehs_histograms(
 /// * `round` the round of data to be read (0 is preflop, 4 is river)
 /// * `dim` the dimension of the historgram (number of bins)
 /// * `n_samples` the number of samples per histogram
-pub fn read_ehs_histograms(
-    round: usize,
-    dim: usize,
-    n_samples: usize,
-) -> Result<Array2<f32>, Box<dyn Error>> {
-    let mut file = File::open(format!("hist-r{}-d{}-s{}.dat", round, dim, n_samples))?;
+pub fn read_ehs_histograms(round: usize, dim: usize) -> Result<Array2<f32>, Box<dyn Error>> {
+    let mut file = File::open(format!("hist-r{}-d{}.dat", round, dim))?;
     let flat_data = file.read_vec_from_file::<f32>()?;
     // TODO handle shape error instead
     let data = Array2::from_shape_vec((flat_data.len() / dim, dim), flat_data)?;
     Ok(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use test::Bencher;
+
+    #[bench]
+    // test histogram::tests::bench_gen_ehs_hist ... bench: 120,592,094 ns/iter (+/- 20,527,346)
+    fn bench_gen_ehs_hist(b: &mut Bencher) {
+        b.iter(|| {
+            generate_ehs_histograms(0, 50);
+        })
+    }
 }
