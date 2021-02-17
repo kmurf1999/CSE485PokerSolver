@@ -2,10 +2,14 @@ use ndarray::parallel::prelude::*;
 use ndarray::prelude::*;
 use rust_poker::equity_calculator::calc_equity;
 use rust_poker::hand_range::{get_card_mask, HandRange};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Instant;
+
 use rust_poker::{
     constants::{RANK_TO_CHAR, SUIT_TO_CHAR},
     HandIndexer,
 };
+use std::io::{self, Write};
 
 static OCHS_CLUSTERS: &[&str; 8] = &[
     "88+",
@@ -30,24 +34,51 @@ fn cards_to_str(cards: &[u8]) -> String {
     out
 }
 
-pub fn gen_ochs_vectors() {
-    let indexer = HandIndexer::init(2, [2, 5].to_vec());
-    let round_size = indexer.size(1) as usize; // 123156254
-    let sim_count = 1000;
+pub fn gen_ochs_vectors(round: u8, sim_count: u64) -> Array2<f32> {
+    let start_time = Instant::now();
+    println!(
+        "Generating ochs vectors for round: {}, sim_count: {}",
+        3, sim_count
+    );
+
+    let indexer = match round {
+        1 => HandIndexer::init(2, [2, 3].to_vec()),
+        2 => HandIndexer::init(2, [2, 4].to_vec()),
+        3 => HandIndexer::init(2, [2, 5].to_vec()),
+        _ => panic!("invalid round"),
+    };
+    let n_board_cards = match round {
+        1 => 3,
+        2 => 4,
+        3 => 5,
+        _ => panic!("invalid round"),
+    };
+
+    let round_size = if round == 0 {
+        indexer.size(0)
+    } else {
+        indexer.size(1)
+    } as usize;
 
     // 123156254 * 32 bits * 8 = 3.941000128 gigabytes
     let mut ochs_vectors: Array2<f32> = Array2::zeros((round_size, OCHS_CLUSTERS.len()));
+    let counter = AtomicU32::new(0);
 
     ochs_vectors
         .axis_iter_mut(Axis(0))
         .into_par_iter()
         .enumerate()
         .for_each(|(i, mut ochs_vec)| {
-            // let indexer = HandIndexer::init(2, [2, 5].to_vec());
+            // print progress
+            let c = counter.fetch_add(1, Ordering::SeqCst);
+            if i.trailing_zeros() >= 12 {
+                print!("{:.3}% \r", c as f32 / round_size as f32);
+                io::stdout().flush().unwrap();
+            }
             let mut cards = [0u8; 7];
             indexer.get_hand(1, i as u64, &mut cards);
             let hole_cards = cards_to_str(&cards[0..2]);
-            let board_cards = cards_to_str(&cards[2..7]);
+            let board_cards = cards_to_str(&cards[2..(n_board_cards + 2)]);
             let board_mask = get_card_mask(board_cards.as_str());
             for i in 0..OCHS_CLUSTERS.len() {
                 let ranges = HandRange::from_strings(
@@ -57,6 +88,11 @@ pub fn gen_ochs_vectors() {
                 ochs_vec[i] = equity[0] as f32;
             }
         });
+
+    let duration = start_time.elapsed().as_millis();
+    println!("done. took {}ms", duration);
+
+    ochs_vectors
 }
 
 #[cfg(test)]
