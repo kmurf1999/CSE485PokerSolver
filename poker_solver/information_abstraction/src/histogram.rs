@@ -1,9 +1,10 @@
 use crate::ehs::EHSReader;
 use itertools::Itertools;
 use ndarray::parallel::prelude::*;
+use ndarray::prelude::*;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use ndarray::{Array2, Axis};
+use ndarray::{Array1, Array2, Axis};
 use rust_poker::read_write::VecIO;
 use std::error::Error;
 use std::fs::File;
@@ -38,8 +39,9 @@ pub fn generate_ehs_histograms(round: usize, dim: usize) -> Result<Array2<f32>, 
     // Setup
     let cards_per_round = [2, 5, 6, 7];
     let ehs_reader = EHSReader::new().unwrap();
-    let round_size = ehs_reader.indexers[round].size(if round > 0 { 1 } else { 0 }) as usize;
+    let round_size = ehs_reader.indexers[round].size(if round == 0 { 0 } else { 1 }) as usize;
     let counter = AtomicU32::new(0);
+
     // dataset to generate
     let mut dataset = Array2::<f32>::zeros((round_size, dim));
     dataset
@@ -47,15 +49,17 @@ pub fn generate_ehs_histograms(round: usize, dim: usize) -> Result<Array2<f32>, 
         .into_par_iter()
         .enumerate()
         .for_each(|(i, mut hist)| {
-            let count = counter.fetch_add(1, Ordering::SeqCst);
-
+            if i > 5 {
+                return;
+            }
+            let ehs_reader = EHSReader::new().unwrap();
+            let c = counter.fetch_add(1, Ordering::SeqCst);
             if round == 0 || i.trailing_zeros() >= 12 {
-                println!("{:.3}% \r", count as f32 / round_size as f32);
+                print!("{}/{}\r", c, round_size);
                 io::stdout().flush().unwrap();
             }
 
             let mut cards = vec![52u8; 7];
-            // let mut cards = vec![52u8; cards_per_round[round + 1]];
             // get initial cards
             ehs_reader.indexers[round].get_hand(
                 if round == 0 { 0 } else { 1 },
@@ -64,10 +68,10 @@ pub fn generate_ehs_histograms(round: usize, dim: usize) -> Result<Array2<f32>, 
             );
             // generate hand mask for sampling
             let mut hand_mask = 0u64;
-            for j in 0..cards_per_round[round] {
-                hand_mask |= 1u64 << cards[j];
+            for c in &cards[0..cards_per_round[round]] {
+                hand_mask |= 1u64 << c;
             }
-            // iterate over all posible next card combinations (or next 3 cards if round == 0)
+            // iterate over all posible remaining card combinations
             let mut count = 0f32;
             (0..52)
                 .combinations(7 - cards_per_round[round])
@@ -82,6 +86,7 @@ pub fn generate_ehs_histograms(round: usize, dim: usize) -> Result<Array2<f32>, 
                     for j in 0..combo.len() {
                         cards[cards_per_round[round] + j] = combo[j];
                     }
+                    // get ehs on final round
                     let ehs = ehs_reader.get_ehs(&cards, 3).unwrap();
                     hist[get_bin(ehs, dim)] += 1.0;
                     count += 1.0;
