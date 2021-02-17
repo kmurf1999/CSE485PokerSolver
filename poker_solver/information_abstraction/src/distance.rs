@@ -7,6 +7,7 @@ use ndarray::prelude::*;
 /// # Arguments
 /// * `p` the first normalized histogram
 /// * `q` the second normalize histogram
+#[inline(always)]
 pub fn emd(p: &ArrayView1<f32>, q: &ArrayView1<f32>) -> f32 {
     let n = p.len();
     let mut dists = vec![0.0; n];
@@ -17,10 +18,21 @@ pub fn emd(p: &ArrayView1<f32>, q: &ArrayView1<f32>) -> f32 {
 }
 
 /// Calculates the L2 distance between two vectors
-fn l2(lhs: &ArrayView1<f32>, rhs: &ArrayView1<f32>) -> f32 {
+#[inline(always)]
+pub fn euclid(lhs: &ArrayView1<f32>, rhs: &ArrayView1<f32>) -> f32 {
     let mut sq_dist_sum = 0.0;
     for i in 0..lhs.len() {
         sq_dist_sum += (lhs[i] - rhs[i]).powf(2.0);
     }
     sq_dist_sum.sqrt()
+}
+
+/// Calculates the L2 distance between two vectors
+pub fn l2(lhs: &ArrayView1<f32>, rhs: &ArrayView1<f32>) -> f32 {
+    let mut sq_dist_sum = 0.0;
+    for i in 0..lhs.len() {
+        let d2 = lhs[i] - rhs[i];
+        sq_dist_sum += d2 * d2;
+    }
+    sq_dist_sum
 }
