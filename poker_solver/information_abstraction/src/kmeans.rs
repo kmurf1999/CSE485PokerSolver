@@ -25,14 +25,14 @@ pub trait Kmeans {
     fn init_random(
         k: usize,
         dataset: &Array2<f32>,
-        dist_func: &'static (dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
+        dist_func: &(dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
         n_restarts: usize,
         verbose: bool,
     ) -> Self;
     fn init_pp(
         k: usize,
         dataset: &Array2<f32>,
-        dist_func: &'static (dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
+        dist_func: &(dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
         n_restarts: usize,
         verbose: bool,
     ) -> Self;
@@ -41,7 +41,7 @@ pub trait Kmeans {
     fn run(
         &mut self,
         dataset: &Array2<f32>,
-        dist_func: &'static (dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
+        dist_func: &(dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
         max_iterations: usize,
         verbose: bool,
     ) -> f32;
@@ -56,7 +56,7 @@ pub trait Kmeans {
     fn init_centers_random(
         k: usize,
         dataset: &Array2<f32>,
-        dist_func: &'static (dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
+        dist_func: &(dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
         n_restarts: usize,
         verbose: bool,
     ) -> (Array2<f32>, f32) {
@@ -133,7 +133,7 @@ pub trait Kmeans {
     fn init_centers_pp(
         k: usize,
         dataset: &Array2<f32>,
-        dist_func: &'static (dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
+        dist_func: &(dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
         n_restarts: usize,
         verbose: bool,
     ) -> (Array2<f32>, f32) {
@@ -226,7 +226,7 @@ impl VanillaKmeans {
     fn initialize_assignments(
         &mut self,
         dataset: &Array2<f32>,
-        dist_func: &'static (dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
+        dist_func: &(dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
     ) {
         let mut assignments = vec![0usize; self.n_data];
         assignments
@@ -276,7 +276,7 @@ impl VanillaKmeans {
     fn reassign_clusters(
         &mut self,
         dataset: &Array2<f32>,
-        dist_func: &'static (dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
+        dist_func: &(dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
     ) -> (usize, f32) {
         let mut changed = 0;
         let mut new_assignments = vec![0usize; self.n_data];
@@ -329,7 +329,7 @@ impl Kmeans for VanillaKmeans {
     fn init_random(
         k: usize,
         dataset: &Array2<f32>,
-        dist_func: &'static (dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
+        dist_func: &(dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
         n_restarts: usize,
         verbose: bool,
     ) -> Self {
@@ -351,7 +351,7 @@ impl Kmeans for VanillaKmeans {
     fn init_pp(
         k: usize,
         dataset: &Array2<f32>,
-        dist_func: &'static (dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
+        dist_func: &(dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
         n_restarts: usize,
         verbose: bool,
     ) -> Self {
@@ -377,7 +377,7 @@ impl Kmeans for VanillaKmeans {
     fn run(
         &mut self,
         dataset: &Array2<f32>,
-        dist_func: &'static (dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
+        dist_func: &(dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
         max_iterations: usize,
         verbose: bool,
     ) -> f32 {
@@ -447,7 +447,7 @@ impl Kmeans for HammerlyKmeans {
     fn init_random(
         k: usize,
         dataset: &Array2<f32>,
-        dist_func: &'static (dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
+        dist_func: &(dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
         n_restarts: usize,
         verbose: bool,
     ) -> Self {
@@ -473,7 +473,7 @@ impl Kmeans for HammerlyKmeans {
     fn init_pp(
         k: usize,
         dataset: &Array2<f32>,
-        dist_func: &'static (dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
+        dist_func: &(dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
         n_restarts: usize,
         verbose: bool,
     ) -> Self {
@@ -497,7 +497,7 @@ impl Kmeans for HammerlyKmeans {
     fn run(
         &mut self,
         dataset: &Array2<f32>,
-        dist_func: &'static (dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
+        dist_func: &(dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
         max_iterations: usize,
         verbose: bool,
     ) -> f32 {
@@ -595,7 +595,7 @@ impl Kmeans for HammerlyKmeans {
 impl HammerlyKmeans {
     fn update_s(
         &mut self,
-        dist_func: &'static (dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
+        dist_func: &(dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
     ) {
         let mut s = vec![f32::MAX; self.k];
         s.par_iter_mut().enumerate().for_each(|(i, si)| {
@@ -618,7 +618,7 @@ impl HammerlyKmeans {
     }
     fn move_centers(
         &mut self,
-        dist_func: &'static (dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
+        dist_func: &(dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
     ) {
         let center_sums = &self.center_sums;
         let center_counts = &self.center_counts;
@@ -639,7 +639,7 @@ impl HammerlyKmeans {
     fn update_assignments(
         &mut self,
         dataset: &Array2<f32>,
-        dist_func: &'static (dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
+        dist_func: &(dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
     ) -> Vec<usize> {
         let s = &self.s;
         let centers = &self.centers;
@@ -738,11 +738,11 @@ mod tests {
         let round = 0;
         let dim = 50;
         let n_samples = 10000;
-        let dataset = read_ehs_histograms(round, dim, n_samples).unwrap();
+        let dataset = read_ehs_histograms(round, dim).unwrap();
         let k = 8;
         b.iter(|| {
-            let mut classifier = HammerlyKmeans::init_pp(k, &dataset, &distance::l2, 5, false);
-            classifier.run(&dataset, &distance::l2, 100, false);
+            let mut classifier = HammerlyKmeans::init_pp(k, &dataset, &distance::emd, 5, false);
+            classifier.run(&dataset, &distance::emd, 100, false);
         });
     }
 
@@ -752,7 +752,7 @@ mod tests {
         let round = 0;
         let dim = 50;
         let n_samples = 10000;
-        let dataset = read_ehs_histograms(round, dim, n_samples).unwrap();
+        let dataset = read_ehs_histograms(round, dim).unwrap();
         let k = 8;
         b.iter(|| {
             let mut classifier = VanillaKmeans::init_pp(k, &dataset, &distance::emd, 5, false);
@@ -766,7 +766,7 @@ mod tests {
         let round = 0;
         let dim = 50;
         let n_samples = 10000;
-        let dataset = read_ehs_histograms(round, dim, n_samples).unwrap();
+        let dataset = read_ehs_histograms(round, dim).unwrap();
         let k = 8;
         b.iter(|| {
             VanillaKmeans::init_random(k, &dataset, &distance::emd, 25, false);
@@ -779,7 +779,7 @@ mod tests {
         let round = 0;
         let dim = 50;
         let n_samples = 10000;
-        let dataset = read_ehs_histograms(round, dim, n_samples).unwrap();
+        let dataset = read_ehs_histograms(round, dim).unwrap();
         let k = 8;
         b.iter(|| {
             VanillaKmeans::init_pp(k, &dataset, &distance::emd, 1, false);

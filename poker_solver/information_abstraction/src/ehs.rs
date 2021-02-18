@@ -154,3 +154,15 @@ impl EHSReader {
         Ok(ehs)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use test::Bencher;
+
+    #[bench]
+    // test ehs::tests::bench_init_read          ... bench:     208,213 ns/iter (+/- 33,083)
+    fn bench_init_reader(b: &mut Bencher) {
+        b.iter(EHSReader::new);
+    }
+}

@@ -11,8 +11,16 @@ members = [
     "information_abstraction"
 ]
 
-[build]
-rustflags = ["-C", "target-cpu=native"]
+[target.'cfg(any(windows, unix))']
+rustflags = ["-C target-cpu=native"]
+
+[profile.release]
+lto = true
+codegen-units = 1
+# Includes debug information in release builds. Necessary for profiling. Does not
+# slow down the executable.
+debug = true
+opt-level = 3
 
 [dependencies]
 rust_poker = { version = "0.1.10", features = ["indexer"] }

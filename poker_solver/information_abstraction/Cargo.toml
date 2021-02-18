@@ -4,11 +4,11 @@ version = "0.1.0"
 authors = ["Kyle Murphy <kwmurph2@asu.edu>"]
 edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-[build]
-rustflags = ["-C", "target-cpu=native"]
+[target.'cfg(any(windows, unix))']
+rustflags = ["-C target-cpu=native"]
 
 [dependencies]
+num_cpus = "1.2"
 itertools = { version = "0.10.0" }
 rust_poker = { version = "0.1.10", features = ["indexer"] }
 rand = { version = "0.7.3", features = [ "small_rng" ] }

@@ -27,12 +27,12 @@ pub fn euclid(lhs: &ArrayView1<f32>, rhs: &ArrayView1<f32>) -> f32 {
     sq_dist_sum.sqrt()
 }
 
-/// Calculates the L2 distance between two vectors
-pub fn l2(lhs: &ArrayView1<f32>, rhs: &ArrayView1<f32>) -> f32 {
-    let mut sq_dist_sum = 0.0;
-    for i in 0..lhs.len() {
-        let d2 = lhs[i] - rhs[i];
-        sq_dist_sum += d2 * d2;
-    }
-    sq_dist_sum
-}
+// /// Calculates the L2 distance between two vectors
+// pub fn l2(lhs: &ArrayView1<f32>, rhs: &ArrayView1<f32>) -> f32 {
+//     let mut sq_dist_sum = 0.0;
+//     for i in 0..lhs.len() {
+//         let d2 = lhs[i] - rhs[i];
+//         sq_dist_sum += d2 * d2;
+//     }
+//     sq_dist_sum
+// }
