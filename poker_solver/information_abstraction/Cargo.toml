@@ -8,6 +8,7 @@ edition = "2018"
 rustflags = ["-C target-cpu=native"]
 
 [dependencies]
+mpi = "0.5"
 num_cpus = "1.2"
 itertools = { version = "0.10.0" }
 rust_poker = { version = "0.1.10", features = ["indexer"] }
