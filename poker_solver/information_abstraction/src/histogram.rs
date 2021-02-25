@@ -7,6 +7,8 @@ use std::error::Error;
 use std::fs::File;
 use std::io::{self, Write};
 use std::time::Instant;
+use mpi::traits::*;
+
 
 #[inline(always)]
 fn get_bin(value: f32, bins: usize) -> usize {
@@ -29,6 +31,13 @@ fn get_bin(value: f32, bins: usize) -> usize {
 /// * `round` round to generate histograms for (0 -> preflop, 4 -> river)
 /// * `dim` number of buckets per histogram
 pub fn generate_ehs_histograms(round: usize, dim: usize) -> Result<Array2<f32>, Box<dyn Error>> {
+    let universe = mpi::initialize().unwrap();
+    let world = universe.world();
+    let rank = world.rank() as usize;
+    let size = world.size() as usize;
+    let root_process = world.process_at_rank(0);
+    let is_root = rank == 0;
+
     let start_time = Instant::now();
 
     println!("Generating histograms for round: {}, dim: {}", round, dim);
@@ -37,8 +46,13 @@ pub fn generate_ehs_histograms(round: usize, dim: usize) -> Result<Array2<f32>, 
     let ehs_reader = EhsReader::new().unwrap();
     let round_size = ehs_reader.indexers[round].size(if round == 0 { 0 } else { 1 }) as usize;
     let size_per_thread = round_size / num_cpus::get();
+    
     // dataset to generate
-    let mut dataset = Array2::<f32>::zeros((round_size, dim));
+    let mut dataset: Option<Array2<f32>> = None;
+    if is_root {
+        dataset = Some(Array2::<f32>::zeros((round_size, dim)));
+    }
+    
     crossbeam::scope(|scope| {
         for (i, mut slice) in dataset
             .axis_chunks_iter_mut(Axis(0), size_per_thread)

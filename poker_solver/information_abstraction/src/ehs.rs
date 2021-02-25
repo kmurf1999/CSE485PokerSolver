@@ -1,4 +1,4 @@
-use rust_poker::equity_calculator::{approx_equity, exact_equity};
+use rust_poker::equity_calculator::exact_equity;
 use rust_poker::hand_range::{Combo, HandRange};
 use rust_poker::read_write::VecIO;
 use rust_poker::HandIndexer;
@@ -16,23 +16,18 @@ const EHS_TABLE_FILENAME: &str = "EHS.dat";
 
 type Precision = f32;
 
-fn get_batch_size(real_size: usize, size: usize) -> (usize, usize) {
-    let q = real_size / size;
-    let batch_size = size * (q + 1);
-    (batch_size, batch_size / size)
-}
-
 /// Generates an Expected Hand Strength (EHS) table.
 /// Table is used to aid the creation of state abstractions for each betting round
 ///
 /// Using indicies obtained from rust_poker::HandIndexer object
 /// Lookup the EHS of any hand
-pub fn generate_ehs_table(n_threads: usize) {
+pub fn generate_ehs_table() {
     let universe = mpi::initialize().unwrap();
     let world = universe.world();
     let rank = world.rank() as usize;
     let size = world.size() as usize;
     let root_process = world.process_at_rank(0);
+    let is_root = rank == 0;
 
     let cards_per_round: [usize; 4] = [2, 5, 6, 7];
 
@@ -45,7 +40,7 @@ pub fn generate_ehs_table(n_threads: usize) {
 
     // Create new file, exit if file exists
     let mut file: Option<File> = None;
-    if rank == 0 {
+    if is_root {
         file = Some(OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -55,43 +50,47 @@ pub fn generate_ehs_table(n_threads: usize) {
    
 
     const ROUNDS: usize = 4;
-    for i in 0..ROUNDS {
+    for round in 0..ROUNDS {
+        // for timing
         let start_time = Instant::now();
-        let round = if i == 0 { 0 } else { 1 };
+        // round for use in indexer
+        let i_round = if round == 0 { 0 } else { 1 };
         // Number of isomorphic hands this round
-        let num_hands = indexers[i].size(round) as usize;
-        let size_per_thread = num_hands / n_threads;
+        let num_hands = indexers[round].size(i_round) as usize;
 
-        let (total_size, batch_size) = get_batch_size(num_hands, size);
+        let (total_size, batch_size) = crate::split_into_batches(num_hands, size);
 
         let all_indicies: Vec<usize> = (0..total_size).into_iter().collect();
         let mut batch_indicies: Vec<usize> = vec![0usize; batch_size];
 
-        if rank == 0 {
+        if is_root {
             root_process.scatter_into_root(&all_indicies[..], &mut batch_indicies[..]);
         } else {
             root_process.scatter_into(&mut batch_indicies[..]);
         }
 
-        let mut equity_table: Vec<Precision> = Vec::new();
+        let mut equity_all: Vec<Precision> = Vec::new();
         let mut equity_batch: Vec<Precision> = vec![0.0; batch_size];
-        if rank == 0 {
-            equity_table = vec![0.0; total_size];
+        if is_root {
+            equity_all = vec![0.0; total_size];
         }
 
         equity_batch.par_iter_mut().zip(batch_indicies).for_each(|(eq, index)| {
-            if rank == 0 && index.trailing_zeros() >= 12 {
+            if index >= num_hands {
+                return;
+            }
+            if is_root && index.trailing_zeros() >= 12 {
                 print!(
                     "round {}: {:.3}% \r",
-                    i,
+                    round,
                     index as Precision / batch_size as Precision
                 );
                 io::stdout().flush().unwrap();
             }
-            let mut cards: Vec<u8> = vec![0; cards_per_round[i]];
+            let mut cards: Vec<u8> = vec![0; cards_per_round[round]];
             // get hand at index
-            indexers[i].get_hand(
-                round,
+            indexers[round].get_hand(
+                i_round,
                 index.try_into().unwrap(),
                 cards.as_mut_slice(),
             );
@@ -99,7 +98,7 @@ pub fn generate_ehs_table(n_threads: usize) {
             let combo = Combo(cards[0], cards[1], 100);
             // get board mask
             let mut board_mask = 0u64;
-            for c in &cards[2..cards_per_round[i]] {
+            for c in &cards[2..cards_per_round[round]] {
                 board_mask |= 1u64 << c;
             }
             // create ranges
@@ -110,8 +109,8 @@ pub fn generate_ehs_table(n_threads: usize) {
             *eq = exact_equity(&hand_ranges, board_mask, 1).unwrap()[0] as Precision;
         });
 
-        if rank == 0 {
-            root_process.gather_into_root(&equity_batch[..], &mut equity_table[..]);
+        if is_root {
+            root_process.gather_into_root(&equity_batch[..], &mut equity_all[..]);
         } else {
             root_process.gather_into(&equity_batch[..]);
         }
@@ -119,12 +118,12 @@ pub fn generate_ehs_table(n_threads: usize) {
         // write round to file
         match &mut file {
             Some(f) => {
-                f.write_slice_to_file(&equity_table[0..num_hands]).unwrap();
+                f.write_slice_to_file(&equity_all[0..num_hands]).unwrap();
                 // print duration
                 let duration = start_time.elapsed().as_millis();
                 println!(
                     "round {} done. took {}ms ({:.2} iterations / ms)",
-                    i,
+                    round,
                     duration,
                     num_hands as Precision / duration as Precision
                 );
@@ -152,8 +151,8 @@ impl EhsReader {
             HandIndexer::init(2, [2, 5].to_vec()),
         ];
         let mut offsets: [u64; 4] = [0; 4];
-        for i in 1..4 {
-            offsets[i] = offsets[i - 1] + indexers[i - 1].size(if i == 1 { 0 } else { 1 });
+        for round in 1..4 {
+            offsets[round] = offsets[round - 1] + indexers[round - 1].size(if round == 1 { 0 } else { 1 });
         }
         Ok(EhsReader {
             indexers,
@@ -190,5 +189,20 @@ mod tests {
     // test ehs::tests::bench_init_read          ... bench:     208,213 ns/iter (+/- 33,083)
     fn bench_init_reader(b: &mut Bencher) {
         b.iter(EhsReader::new);
+    }
+
+    #[bench]
+    fn bench_get_ehs(b: &mut Bencher) {
+        let reader = EhsReader::new().unwrap();
+        let cards = [4u8 * 12, 4u8 * 12 + 1];
+        b.iter(|| reader.get_ehs(&cards, 0));
+    }
+
+    #[test]
+    fn test_preflop() {
+        let reader = EhsReader::new().unwrap();
+        let cards = [4u8 * 12, 4u8 * 12 + 1];
+        let eq = reader.get_ehs(&cards, 0).unwrap();
+        assert_eq!(eq, 0.85);
     }
 }

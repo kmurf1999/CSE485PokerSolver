@@ -8,7 +8,7 @@ use std::result::Result;
 use std::error::Error;
 
 use rust_poker::read_write::VecIO;
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 
 
 #[derive(Clap)]
@@ -36,7 +36,7 @@ struct Opts {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let opts: Opts = Opts::parse();
-    assert!(opts.round >= 0 && opts.round <= 3);
+    assert!(opts.round <= 3);
     assert!(opts.dim > 0);
     assert!(opts.k > 1);
     assert!(opts.n_restarts > 0);
