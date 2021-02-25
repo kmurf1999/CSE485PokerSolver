@@ -46,68 +46,68 @@ pub fn generate_ehs_histograms(round: usize, dim: usize) -> Result<Array2<f32>, 
     let ehs_reader = EhsReader::new().unwrap();
     let round_size = ehs_reader.indexers[round].size(if round == 0 { 0 } else { 1 }) as usize;
     let size_per_thread = round_size / num_cpus::get();
-    
+
     // dataset to generate
     let mut dataset: Option<Array2<f32>> = None;
     if is_root {
         dataset = Some(Array2::<f32>::zeros((round_size, dim)));
     }
     
-    crossbeam::scope(|scope| {
-        for (i, mut slice) in dataset
-            .axis_chunks_iter_mut(Axis(0), size_per_thread)
-            .enumerate()
-        {
-            let ehs_reader = EhsReader::new().unwrap();
-            let mut cards = vec![52u8; 7];
-            scope.spawn(move |_| {
-                for j in 0..slice.len_of(Axis(0)) {
-                    let mut hist = slice.slice_mut(s![j, ..]);
-                    if (i == 0) && j.trailing_zeros() >= 12 {
-                        print!("{:.3}% \r", (100 * j) as f32 / size_per_thread as f32);
-                        io::stdout().flush().unwrap();
-                    }
-                    let index = ((i * size_per_thread) + j) as u64;
-                    ehs_reader.indexers[round].get_hand(
-                        if round == 0 { 0 } else { 1 },
-                        index,
-                        cards.as_mut_slice(),
-                    );
-                    // build card mask for rejection sampling
-                    let mut hand_mask: u64 = 0;
-                    for c in &cards[0..cards_per_round[round]] {
-                        hand_mask |= 1u64 << c;
-                    }
-                    // iterate over all posible remaining card combinations
-                    let mut count = 0f32;
-                    (0..52)
-                        .combinations(7 - cards_per_round[round])
-                        .for_each(|combo| {
-                            let mut combo_mask = 0u64;
-                            for c in &combo {
-                                combo_mask |= 1u64 << c;
-                            }
-                            if (combo_mask & hand_mask) != 0 {
-                                return;
-                            }
-                            for k in 0..combo.len() {
-                                cards[cards_per_round[round] + k] = combo[k];
-                            }
-                            // get ehs on final round
-                            let ehs = ehs_reader.get_ehs(&cards, 3).unwrap();
-                            hist[get_bin(ehs, dim)] += 1.0;
-                            count += 1.0;
-                        });
-                    hist /= count;
-                }
-            });
-        }
-    })
-    .unwrap();
+    // crossbeam::scope(|scope| {
+    //     for (i, mut slice) in dataset
+    //         .axis_chunks_iter_mut(Axis(0), size_per_thread)
+    //         .enumerate()
+    //     {
+    //         let ehs_reader = EhsReader::new().unwrap();
+    //         let mut cards = vec![52u8; 7];
+    //         scope.spawn(move |_| {
+    //             for j in 0..slice.len_of(Axis(0)) {
+    //                 let mut hist = slice.slice_mut(s![j, ..]);
+    //                 if (i == 0) && j.trailing_zeros() >= 12 {
+    //                     print!("{:.3}% \r", (100 * j) as f32 / size_per_thread as f32);
+    //                     io::stdout().flush().unwrap();
+    //                 }
+    //                 let index = ((i * size_per_thread) + j) as u64;
+    //                 ehs_reader.indexers[round].get_hand(
+    //                     if round == 0 { 0 } else { 1 },
+    //                     index,
+    //                     cards.as_mut_slice(),
+    //                 );
+    //                 // build card mask for rejection sampling
+    //                 let mut hand_mask: u64 = 0;
+    //                 for c in &cards[0..cards_per_round[round]] {
+    //                     hand_mask |= 1u64 << c;
+    //                 }
+    //                 // iterate over all posible remaining card combinations
+    //                 let mut count = 0f32;
+    //                 (0..52)
+    //                     .combinations(7 - cards_per_round[round])
+    //                     .for_each(|combo| {
+    //                         let mut combo_mask = 0u64;
+    //                         for c in &combo {
+    //                             combo_mask |= 1u64 << c;
+    //                         }
+    //                         if (combo_mask & hand_mask) != 0 {
+    //                             return;
+    //                         }
+    //                         for k in 0..combo.len() {
+    //                             cards[cards_per_round[round] + k] = combo[k];
+    //                         }
+    //                         // get ehs on final round
+    //                         let ehs = ehs_reader.get_ehs(&cards, 3).unwrap();
+    //                         hist[get_bin(ehs, dim)] += 1.0;
+    //                         count += 1.0;
+    //                     });
+    //                 hist /= count;
+    //             }
+    //         });
+    //     }
+    // })
+    // .unwrap();
 
-    let duration = start_time.elapsed().as_millis();
-    println!("done. took {}ms", duration);
-    Ok(dataset)
+    // let duration = start_time.elapsed().as_millis();
+    // println!("done. took {}ms", duration);
+    Ok(dataset.unwrap())
 }
 /// Reads histogram data from file and returns a 2D array
 ///
