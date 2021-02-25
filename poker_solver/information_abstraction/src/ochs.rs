@@ -1,6 +1,6 @@
 use ndarray::parallel::prelude::*;
 use ndarray::prelude::*;
-use rust_poker::equity_calculator::calc_equity;
+use rust_poker::equity_calculator::exact_equity;
 use rust_poker::hand_range::{get_card_mask, HandRange};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Instant;
@@ -84,7 +84,7 @@ pub fn gen_ochs_features(round: u8, sim_count: u64) -> Array2<f32> {
                 let ranges = HandRange::from_strings(
                     [hole_cards.to_string(), OCHS_CLUSTERS[i].to_string()].to_vec(),
                 );
-                let equity = calc_equity(&ranges, board_mask, 1, sim_count);
+                let equity = exact_equity(&ranges, board_mask, 1).unwrap();
                 ochs_vec[i] = equity[0] as f32;
             }
         });

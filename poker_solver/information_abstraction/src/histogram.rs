@@ -1,4 +1,4 @@
-use crate::ehs::EHSReader;
+use crate::ehs::EhsReader;
 use itertools::Itertools;
 use ndarray::prelude::*;
 use ndarray::{Array2, Axis};
@@ -34,7 +34,7 @@ pub fn generate_ehs_histograms(round: usize, dim: usize) -> Result<Array2<f32>, 
     println!("Generating histograms for round: {}, dim: {}", round, dim);
 
     let cards_per_round = [2, 5, 6, 7];
-    let ehs_reader = EHSReader::new().unwrap();
+    let ehs_reader = EhsReader::new().unwrap();
     let round_size = ehs_reader.indexers[round].size(if round == 0 { 0 } else { 1 }) as usize;
     let size_per_thread = round_size / num_cpus::get();
     // dataset to generate
@@ -44,7 +44,7 @@ pub fn generate_ehs_histograms(round: usize, dim: usize) -> Result<Array2<f32>, 
             .axis_chunks_iter_mut(Axis(0), size_per_thread)
             .enumerate()
         {
-            let ehs_reader = EHSReader::new().unwrap();
+            let ehs_reader = EhsReader::new().unwrap();
             let mut cards = vec![52u8; 7];
             scope.spawn(move |_| {
                 for j in 0..slice.len_of(Axis(0)) {

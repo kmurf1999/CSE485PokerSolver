@@ -8,10 +8,11 @@ edition = "2018"
 rustflags = ["-C target-cpu=native"]
 
 [dependencies]
-mpi = "0.5"
+mpi = { git = "https://github.com/bsteinb/rsmpi", rev = "f9aec8b8d82" }
 num_cpus = "1.2"
+rayon = { version = "1.0.3" }
 itertools = { version = "0.10.0" }
-rust_poker = { version = "0.1.10", features = ["indexer"] }
+rust_poker = { git = "https://github.com/kmurf1999/rust_poker", features = ["indexer"] }
 rand = { version = "0.7.3", features = [ "small_rng" ] }
 crossbeam = "0.7.3"
 ndarray = { version = "0.13.1", features = ["rayon"] }
