@@ -96,9 +96,6 @@ pub fn generate_ehs_histograms(round: usize, dim: usize) -> Result<(), Box<dyn E
                     if hand_index >= round_size {
                         break;
                     }
-                    if hand_index != 0 {
-                        break;
-                    }
                     ehs_reader.indexers[round].get_hand(
                         if round == 0 { 0 } else { 1 },
                         hand_index as u64,
