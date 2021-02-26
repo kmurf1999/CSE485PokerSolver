@@ -133,7 +133,7 @@ pub fn gen_ochs_features(round: u8) -> Result<(), Box<dyn Error>> {
                 );
                 let equity: f32 = match exact_equity(&ranges, board_mask, 1) {
                     Ok(eq) => eq[0] as f32,
-                    Err(_) => 0.05
+                    Err(_) => 0.5
                 };
                 ochs_vec[j] = equity;
             }
