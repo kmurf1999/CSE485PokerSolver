@@ -59,7 +59,7 @@ pub fn generate_ehs_histograms(round: usize, dim: usize) -> Result<(), Box<dyn E
     let round_size = ehs_reader.indexers[round].size(if round == 0 { 0 } else { 1 }) as usize;
 
     let (total_size, batch_size) = crate::split_into_batches(round_size, size);
-    let size_per_thread = batch_size / num_cpus::get();
+    let size_per_thread = std::cmp::max(batch_size / num_cpus::get(), 1);
 
     let all_indicies: Vec<usize> = (0..total_size).into_iter().collect();
     let mut batch_indicies: Vec<usize> = vec![0usize; batch_size];
@@ -75,7 +75,6 @@ pub fn generate_ehs_histograms(round: usize, dim: usize) -> Result<(), Box<dyn E
     let mut dataset_batch = Array2::<f32>::zeros((batch_size, dim));
     if is_root {
         dataset_all = Array2::<f32>::zeros((total_size, dim));
-        println!("{}, {}", batch_size, size_per_thread);
     }
     
     crossbeam::scope(|scope| {
