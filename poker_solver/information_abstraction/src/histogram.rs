@@ -75,6 +75,7 @@ pub fn generate_ehs_histograms(round: usize, dim: usize) -> Result<(), Box<dyn E
     let mut dataset_batch = Array2::<f32>::zeros((batch_size, dim));
     if is_root {
         dataset_all = Array2::<f32>::zeros((total_size, dim));
+        println!("{}, {}", batch_size, size_per_thread);
     }
     
     crossbeam::scope(|scope| {
