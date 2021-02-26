@@ -151,11 +151,6 @@ pub fn gen_ochs_features(round: u8) -> Result<(), Box<dyn Error>> {
         None => {}
     }
 
-    if is_root {
-        let duration = start_time.elapsed().as_millis();
-        println!("done. took {}ms", duration);
-    }
-
     Ok(())
 }
 
