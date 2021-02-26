@@ -203,6 +203,6 @@ mod tests {
         let reader = EhsReader::new().unwrap();
         let cards = [4u8 * 12, 4u8 * 12 + 1];
         let eq = reader.get_ehs(&cards, 0).unwrap();
-        assert_eq!(eq, 0.85);
+        assert_eq!(eq, 0.85203713);
     }
 }
