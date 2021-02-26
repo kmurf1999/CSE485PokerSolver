@@ -48,6 +48,7 @@ pub fn gen_ochs_features(round: u8) -> Result<(), Box<dyn Error>> {
     let size = world.size() as usize;
     let root_process = world.process_at_rank(0);
     let is_root = rank == 0;
+
     let start_time = Instant::now();
 
     if is_root {
@@ -118,7 +119,7 @@ pub fn gen_ochs_features(round: u8) -> Result<(), Box<dyn Error>> {
             // print progress
             let c = counter.fetch_add(1, Ordering::SeqCst);
             if is_root && i.trailing_zeros() >= 12 {
-                print!("{:.3}% \r", c as f32 / batch_size as f32);
+                print!("{:.3}% \r", c as f32 * 100.0 / batch_size as f32);
                 io::stdout().flush().unwrap();
             }
             let mut cards = [0u8; 7];
@@ -126,12 +127,15 @@ pub fn gen_ochs_features(round: u8) -> Result<(), Box<dyn Error>> {
             let hole_cards = cards_to_str(&cards[0..2]);
             let board_cards = cards_to_str(&cards[2..(n_board_cards + 2)]);
             let board_mask = get_card_mask(board_cards.as_str());
-            for i in 0..OCHS_CLUSTERS.len() {
+            for j in 0..OCHS_CLUSTERS.len() {
                 let ranges = HandRange::from_strings(
-                    [hole_cards.to_string(), OCHS_CLUSTERS[i].to_string()].to_vec(),
+                    [hole_cards.to_string(), OCHS_CLUSTERS[j].to_string()].to_vec(),
                 );
-                let equity = exact_equity(&ranges, board_mask, 1).unwrap();
-                ochs_vec[i] = equity[0] as f32;
+                let equity: f32 = match exact_equity(&ranges, board_mask, 1) {
+                    Ok(eq) => eq[0] as f32,
+                    Err(_) => 0.05
+                };
+                ochs_vec[j] = equity;
             }
         });
 
