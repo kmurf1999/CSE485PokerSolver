@@ -50,7 +50,9 @@ pub fn generate_ehs_histograms(round: usize, dim: usize) -> Result<(), Box<dyn E
 
     let start_time = Instant::now();
 
-    println!("Generating histograms for round: {}, dim: {}", round, dim);
+    if is_root {
+        println!("Generating histograms for round: {}, dim: {}", round, dim);
+    }
 
     let cards_per_round = [2, 5, 6, 7];
     let ehs_reader = EhsReader::new().unwrap();
