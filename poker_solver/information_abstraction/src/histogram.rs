@@ -72,7 +72,7 @@ pub fn generate_ehs_histograms(round: usize, dim: usize) -> Result<(), Box<dyn E
     let mut dataset_all = Array2::<f32>::zeros((0, 0));
     let mut dataset_batch = Array2::<f32>::zeros((batch_size, dim));
     if is_root {
-        dataset_all = Array2::<f32>::zeros((round_size, dim));
+        dataset_all = Array2::<f32>::zeros((total_size, dim));
     }
     
     crossbeam::scope(|scope| {
@@ -86,12 +86,15 @@ pub fn generate_ehs_histograms(round: usize, dim: usize) -> Result<(), Box<dyn E
             scope.spawn(move |_| {
                 for j in 0..slice.len_of(Axis(0)) {
                     let mut hist = slice.slice_mut(s![j, ..]);
-                    if (i == 0) && j.trailing_zeros() >= 12 {
+                    if is_root && (i == 0) && j.trailing_zeros() >= 12 {
                         print!("{:.3}% \r", (100 * j) as f32 / size_per_thread as f32);
                         io::stdout().flush().unwrap();
                     }
                     let hand_index = batch_indicies[i * size_per_thread + j];
                     if hand_index >= round_size {
+                        break;
+                    }
+                    if hand_index != 0 {
                         break;
                     }
                     ehs_reader.indexers[round].get_hand(
@@ -141,7 +144,7 @@ pub fn generate_ehs_histograms(round: usize, dim: usize) -> Result<(), Box<dyn E
         Some(f) => {
             let duration = start_time.elapsed().as_millis();
             println!("done. took {}ms", duration);
-            f.write_slice_to_file(&dataset_all.as_slice().unwrap()[0..round_size * dim])?;
+            f.write_slice_to_file(&dataset_all.as_slice().unwrap()[0..(round_size * dim)])?;
         },
         None => {}
     }
