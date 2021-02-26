@@ -32,7 +32,7 @@ fn main() {
     //     .open(format!("emd-abs-r{}-k{}.dat", round, k))
     //     .unwrap();
 
-    let mut classifier = HammerlyKmeans::init_pp(k, &dataset, &distance::emd, 200, true);
+    let mut classifier = HammerlyKmeans::init_pp(k, &dataset, &distance::emd, 25, true);
     // // println!("intra_cluster_dist: {}", intra_cluster_dist);
     let inertia = classifier.run(&dataset, &distance::emd, 100, true);
     println!("inertia: {},", inertia);

@@ -4,6 +4,13 @@ use rust_poker::equity_calculator::exact_equity;
 use rust_poker::hand_range::{get_card_mask, HandRange};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Instant;
+use mpi::traits::*;
+use std::fs::{OpenOptions, File};
+use std::result::Result;
+use rust_poker::read_write::VecIO;
+
+use std::error::Error;
+
 
 use rust_poker::{
     constants::{RANK_TO_CHAR, SUIT_TO_CHAR},
@@ -34,12 +41,32 @@ fn cards_to_str(cards: &[u8]) -> String {
     out
 }
 
-pub fn gen_ochs_features(round: u8, sim_count: u64) -> Array2<f32> {
+pub fn gen_ochs_features(round: u8) -> Result<(), Box<dyn Error>> {
+    let universe = mpi::initialize().unwrap();
+    let world = universe.world();
+    let rank = world.rank() as usize;
+    let size = world.size() as usize;
+    let root_process = world.process_at_rank(0);
+    let is_root = rank == 0;
     let start_time = Instant::now();
-    println!(
-        "Generating ochs vectors for round: {}, sim_count: {}",
-        3, sim_count
-    );
+
+    if is_root {
+        println!("Generating ochs vectors for round: {}", 3);
+    }
+
+    // Create new file, exit if file exists
+    let mut file: Option<File> = None;
+    if is_root {
+        // create file
+        file = Some(OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(format!(
+                "ochs-features-r{}.dat",
+                round
+            ))?);
+
+    }
 
     let indexer = match round {
         1 => HandIndexer::init(2, [2, 3].to_vec()),
@@ -47,6 +74,7 @@ pub fn gen_ochs_features(round: u8, sim_count: u64) -> Array2<f32> {
         3 => HandIndexer::init(2, [2, 5].to_vec()),
         _ => panic!("invalid round"),
     };
+
     let n_board_cards = match round {
         1 => 3,
         2 => 4,
@@ -60,23 +88,41 @@ pub fn gen_ochs_features(round: u8, sim_count: u64) -> Array2<f32> {
         indexer.size(1)
     } as usize;
 
+    let (total_size, batch_size) = crate::split_into_batches(round_size, size);
+    let all_indicies: Vec<usize> = (0..total_size).into_iter().collect();
+    let mut batch_indicies: Vec<usize> = vec![0usize; batch_size];
+
+    if is_root {
+        root_process.scatter_into_root(&all_indicies[..], &mut batch_indicies[..]);
+    } else {
+        root_process.scatter_into(&mut batch_indicies[..]);
+    }
+
+
+    let mut ochs_all: Array2<f32> = Array2::zeros((0, 0));
+    let mut ochs_batch: Array2<f32> = Array2::zeros((batch_size, OCHS_CLUSTERS.len()));
+    if is_root {
+        ochs_all = Array2::zeros((total_size, OCHS_CLUSTERS.len()));
+    }
+
     // 123156254 * 32 bits * 8 = 3.941000128 gigabytes
-    let mut ochs_vectors: Array2<f32> = Array2::zeros((round_size, OCHS_CLUSTERS.len()));
     let counter = AtomicU32::new(0);
 
-    ochs_vectors
+    ochs_batch
         .axis_iter_mut(Axis(0))
         .into_par_iter()
         .enumerate()
         .for_each(|(i, mut ochs_vec)| {
+            let indicies = &batch_indicies;
+            let hand_index = indicies[i] as u64;
             // print progress
             let c = counter.fetch_add(1, Ordering::SeqCst);
-            if i.trailing_zeros() >= 12 {
-                print!("{:.3}% \r", c as f32 / round_size as f32);
+            if is_root && i.trailing_zeros() >= 12 {
+                print!("{:.3}% \r", c as f32 / batch_size as f32);
                 io::stdout().flush().unwrap();
             }
             let mut cards = [0u8; 7];
-            indexer.get_hand(1, i as u64, &mut cards);
+            indexer.get_hand(1, hand_index, &mut cards);
             let hole_cards = cards_to_str(&cards[0..2]);
             let board_cards = cards_to_str(&cards[2..(n_board_cards + 2)]);
             let board_mask = get_card_mask(board_cards.as_str());
@@ -89,10 +135,28 @@ pub fn gen_ochs_features(round: u8, sim_count: u64) -> Array2<f32> {
             }
         });
 
-    let duration = start_time.elapsed().as_millis();
-    println!("done. took {}ms", duration);
+    
+    if is_root {
+        root_process.gather_into_root(&ochs_batch.as_slice().unwrap()[..], &mut ochs_all.as_slice_mut().unwrap()[..]);
+    } else {
+        root_process.gather_into(&ochs_batch.as_slice().unwrap()[..]);
+    }
 
-    ochs_vectors
+    match &mut file {
+        Some(f) => {
+            let duration = start_time.elapsed().as_millis();
+            println!("done. took {}ms", duration);
+            f.write_slice_to_file(&ochs_batch.as_slice().unwrap()[0..(round_size * OCHS_CLUSTERS.len())])?;
+        },
+        None => {}
+    }
+
+    if is_root {
+        let duration = start_time.elapsed().as_millis();
+        println!("done. took {}ms", duration);
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

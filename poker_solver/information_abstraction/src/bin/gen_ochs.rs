@@ -3,7 +3,6 @@ use clap::Clap;
 use information_abstraction::ochs::gen_ochs_features;
 use rust_poker::read_write::VecIO;
 use std::error::Error;
-use std::fs::OpenOptions;
 use std::result::Result;
 
 #[derive(Clap)]
@@ -20,17 +19,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     assert!(opts.sim_count > 0);
     assert!(opts.round > 1 && opts.round < 4);
 
-    // create file
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(format!(
-            "ochs-features-r{}-s{}.dat",
-            opts.round, opts.sim_count
-        ))?;
-
-    let vectors = gen_ochs_features(opts.round, opts.sim_count);
-
-    file.write_slice_to_file(&vectors.as_slice().unwrap())?;
+    gen_ochs_features(opts.round)?;
     Ok(())
 }
