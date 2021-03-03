@@ -14,4 +14,5 @@ pub mod distance;
 pub mod ehs;
 pub mod histogram;
 pub mod kmeans;
+pub mod mpi_kmeans;
 pub mod ochs;

@@ -72,7 +72,7 @@ pub trait Kmeans {
         let dim = dataset.len_of(Axis(1));
         let counter = AtomicU32::new(0);
 
-        let min_intra_center_dist = Mutex::new(f32::MAX);
+        let max_intra_center_dist = Mutex::new(f32::MAX);
         let final_cluster_centers = Mutex::new(Array2::zeros((k, dim)));
 
         (0..n_restarts).into_par_iter().for_each(|_| {
@@ -105,9 +105,9 @@ pub trait Kmeans {
                 }
                 intra_center_dist += min_dist * min_dist;
             }
-            let mut min_intra_center_dist = min_intra_center_dist.lock().unwrap();
-            if intra_center_dist < *min_intra_center_dist {
-                *min_intra_center_dist = intra_center_dist;
+            let mut max_intra_center_dist = max_intra_center_dist.lock().unwrap();
+            if intra_center_dist > *max_intra_center_dist {
+                *max_intra_center_dist = intra_center_dist;
                 *final_cluster_centers.lock().unwrap() = centers;
             }
         });
@@ -119,7 +119,7 @@ pub trait Kmeans {
 
         (
             final_cluster_centers.into_inner().unwrap(),
-            min_intra_center_dist.into_inner().unwrap(),
+            max_intra_center_dist.into_inner().unwrap(),
         )
     }
     /// Initializes k cluster centers using the Kmeans++ method.
@@ -150,7 +150,7 @@ pub trait Kmeans {
 
         let mut rng = thread_rng();
 
-        let mut best_intra_center_dist = f32::MAX;
+        let mut best_intra_center_dist = 0f32;
         let mut final_cluster_centers = Array2::zeros((k, dim));
 
         for restart in 0..n_restarts {
@@ -187,7 +187,7 @@ pub trait Kmeans {
                     .assign(&dataset.slice(s![last_chosen, ..]));
             }
             let intra_center_dist = min_sq_dists.iter().sum::<f32>();
-            if intra_center_dist < best_intra_center_dist {
+            if intra_center_dist > best_intra_center_dist {
                 best_intra_center_dist = intra_center_dist;
                 final_cluster_centers = centers;
             }
@@ -514,7 +514,7 @@ impl Kmeans for HammerlyKmeans {
         self.upper_bounds = vec![f32::MAX; self.n_data];
         self.center_movements = vec![0f32; self.k];
         self.assignments = vec![0usize; self.n_data];
-        self.s = vec![0f32; self.n_data];
+        self.s = vec![0f32; self.k];
 
         self.update_s(dist_func);
         self.assignments = self.update_assignments(dataset, dist_func);
@@ -593,10 +593,7 @@ impl Kmeans for HammerlyKmeans {
 }
 
 impl HammerlyKmeans {
-    fn update_s(
-        &mut self,
-        dist_func: &(dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
-    ) {
+    fn update_s(&mut self, dist_func: &(dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync)) {
         let mut s = vec![f32::MAX; self.k];
         s.par_iter_mut().enumerate().for_each(|(i, si)| {
             *si = f32::MAX;
