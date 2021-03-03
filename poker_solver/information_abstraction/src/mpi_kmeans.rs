@@ -212,7 +212,7 @@ impl MPIKmeans {
 
         for restart in 0..n_restarts {
             if is_root && verbose {
-                print!("restart: {}\r", restart);
+                print!("restart: {}, starting\r", restart);
                 io::stdout().flush().unwrap();
             }
             let mut centers = Array2::zeros((0, 0));
@@ -237,6 +237,10 @@ impl MPIKmeans {
             }
 
             for i in 1..k {
+                if is_root && verbose {
+                    print!("restart: {}, selecting center: {}/{}\r", restart, i, k);
+                    io::stdout().flush().unwrap();
+                }
                 // update min sq dists
                 batch_min_sq_dists
                     .par_iter_mut()
