@@ -225,11 +225,9 @@ impl MPIKmeans {
             let mut last_chosen: usize = 0;
             // send the chosen index to all nodes
             if is_root {
-                let choice = rng.gen_range(0, n_data);
-                root_process.scatter_into_root(&choice, &mut last_chosen);
-            } else {
-                root_process.scatter_into(&mut last_chosen);
+                last_chosen = rng.gen_range(0, n_data);
             }
+            root_process.broadcast_into(&mut last_chosen);
 
             // assign first cluster randomly
             if is_root {
@@ -269,16 +267,14 @@ impl MPIKmeans {
                 // sample
                 if is_root {
                     let distribution = WeightedIndex::new(&all_min_sq_dists[0..n_data]).unwrap();
-                    let choice = distribution.sample(&mut rng);
+                    last_chosen = distribution.sample(&mut rng);
                     centers
                         .slice_mut(s![i, ..])
-                        .assign(&dataset.slice(s![choice, ..]));
+                        .assign(&dataset.slice(s![last_chosen, ..]));
                     // send next chosen
-                    root_process.scatter_into_root(&choice, &mut last_chosen);
                     println!("n_data: {}, choice: {}", n_data, last_chosen);
-                } else {
-                    root_process.scatter_into(&mut last_chosen);
                 }
+                root_process.broadcast_into(&mut last_chosen);
             }
 
             if is_root {
