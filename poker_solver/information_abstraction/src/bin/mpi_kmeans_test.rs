@@ -25,7 +25,7 @@ fn main() {
     let k = 8;
     let indexer = HandIndexer::init(1, [2].to_vec());
 
-    let mut classifier = MPIKmeans::init_random(world, k, &dataset, &distance::emd, 100, true);
+    let mut classifier = MPIKmeans::init_pp(world, k, &dataset, &distance::emd, 100, true);
     classifier.run(&dataset, world, &distance::emd, 100, true);
 
     if world.rank() == 0 {

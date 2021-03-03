@@ -271,8 +271,6 @@ impl MPIKmeans {
                     centers
                         .slice_mut(s![i, ..])
                         .assign(&dataset.slice(s![last_chosen, ..]));
-                    // send next chosen
-                    println!("n_data: {}, choice: {}", n_data, last_chosen);
                 }
                 root_process.broadcast_into(&mut last_chosen);
             }
