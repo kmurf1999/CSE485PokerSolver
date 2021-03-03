@@ -275,6 +275,7 @@ impl MPIKmeans {
                         .assign(&dataset.slice(s![choice, ..]));
                     // send next chosen
                     root_process.scatter_into_root(&choice, &mut last_chosen);
+                    println!("n_data: {}, choice: {}", n_data, last_chosen);
                 } else {
                     root_process.scatter_into(&mut last_chosen);
                 }
