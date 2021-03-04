@@ -23,7 +23,7 @@ debug = true
 opt-level = 3
 
 [dependencies]
-rust_poker = { version = "0.1.10", features = ["indexer"] }
+rust_poker = { version = "0.1.13", features = ["indexer"] }
 rand = { version = "0.7.3", features = [ "small_rng" ] }
 # concurrency
 crossbeam = "0.7.3"

@@ -150,7 +150,7 @@ pub fn gen_ochs_features(round: u8) -> Result<(), Box<dyn Error>> {
         Some(f) => {
             let duration = start_time.elapsed().as_millis();
             println!("done. took {}ms", duration);
-            f.write_slice_to_file(&ochs_batch.as_slice().unwrap()[0..(round_size * OCHS_CLUSTERS.len())])?;
+            f.write_slice_to_file(&ochs_all.as_slice().unwrap()[0..(round_size * OCHS_CLUSTERS.len())])?;
         },
         None => {}
     }
