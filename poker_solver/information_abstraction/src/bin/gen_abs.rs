@@ -2,6 +2,7 @@ use clap::Clap;
 
 use information_abstraction::distance;
 use information_abstraction::histogram::read_ehs_histograms;
+use information_abstraction::ochs::read_ochs_vectors;
 use information_abstraction::mpi_kmeans::MPIKmeans;
 use mpi::traits::*;
 use ndarray::prelude::*;
@@ -45,13 +46,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     assert!(opts.k > 1);
     assert!(opts.n_restarts > 0);
     assert!(opts.max_iter > 0);
-    let dataset = read_ehs_histograms(opts.round, opts.dim)?;
+    let dataset = let dist_fn = match opts.dist_fn.as_str() {
+        "emd" => read_ehs_histograms(opts.round, opts.dim)?,
+        "ochs" => read_ochs_vectors(opts.round, opts.dim)?,
+        _ => panic!("invalid distance fn. Must be either \"emd\" or \"euclid\""),
+    }
 
     let dist_fn = match opts.dist_fn.as_str() {
         "emd" => &distance::emd as &(dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
-        "euclid" => {
-            &distance::euclid as &(dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync)
-        }
+        "ochs" => &distance::euclid as &(dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
         _ => panic!("invalid distance fn. Must be either \"emd\" or \"euclid\""),
     };
 
@@ -63,7 +66,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .write(true)
                 .create_new(true)
                 .open(format!(
-                    "emd-abs-r{}-k{}-d{}.dat",
+                    "{}-abs-r{}-k{}-d{}.dat",opts.dist_fn
                     opts.round, opts.k, opts.dim
                 ))?,
         );

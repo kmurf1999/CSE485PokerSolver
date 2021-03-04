@@ -158,6 +158,19 @@ pub fn gen_ochs_features(round: u8) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Reads histogram data from file and returns a 2D array
+///
+/// # Arguments
+/// * `round` the round of data to be read (0 is preflop, 4 is river)
+/// * `dim` the dimension of the historgram (number of bins)
+pub fn read_ochs_vectors(round: usize, dim: usize) -> Result<Array2<f32>, Box<dyn Error>> {
+    let mut file = File::open(format!("ochs-features-r{}.dat", round, dim))?;
+    let flat_data = file.read_vec_from_file::<f32>()?;
+    // TODO handle shape error instead
+    let data = Array2::from_shape_vec((flat_data.len() / dim, dim), flat_data)?;
+    Ok(data)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
