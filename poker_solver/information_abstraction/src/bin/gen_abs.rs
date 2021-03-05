@@ -47,7 +47,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     assert!(opts.n_restarts > 0);
     assert!(opts.max_iter > 0);
 
-    let dataset = dist_fn = match opts.dist_fn.as_str() {
+    let dataset = match opts.dist_fn.as_str() {
         "emd" => read_ehs_histograms(opts.round, opts.dim)?,
         "ochs" => read_ochs_vectors(opts.round, opts.dim)?,
         _ => panic!("invalid distance fn. Must be either \"emd\" or \"ochs\""),
