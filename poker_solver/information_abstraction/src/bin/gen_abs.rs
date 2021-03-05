@@ -51,7 +51,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         "emd" => read_ehs_histograms(opts.round, opts.dim)?,
         "ochs" => read_ochs_vectors(opts.round, opts.dim)?,
         _ => panic!("invalid distance fn. Must be either \"emd\" or \"ochs\""),
-    }
+    };
 
     let dist_fn = match opts.dist_fn.as_str() {
         "emd" => &distance::emd as &(dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
