@@ -46,16 +46,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     assert!(opts.k > 1);
     assert!(opts.n_restarts > 0);
     assert!(opts.max_iter > 0);
-    let dataset = let dist_fn = match opts.dist_fn.as_str() {
+
+    let dataset = dist_fn = match opts.dist_fn.as_str() {
         "emd" => read_ehs_histograms(opts.round, opts.dim)?,
         "ochs" => read_ochs_vectors(opts.round, opts.dim)?,
-        _ => panic!("invalid distance fn. Must be either \"emd\" or \"euclid\""),
+        _ => panic!("invalid distance fn. Must be either \"emd\" or \"ochs\""),
     }
 
     let dist_fn = match opts.dist_fn.as_str() {
         "emd" => &distance::emd as &(dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
         "ochs" => &distance::euclid as &(dyn Fn(&ArrayView1<f32>, &ArrayView1<f32>) -> f32 + Sync),
-        _ => panic!("invalid distance fn. Must be either \"emd\" or \"euclid\""),
+        _ => panic!("invalid distance fn. Must be either \"emd\" or \"ochse\""),
     };
 
     // Create new file, exit if file exists
@@ -66,8 +67,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .write(true)
                 .create_new(true)
                 .open(format!(
-                    "{}-abs-r{}-k{}-d{}.dat",opts.dist_fn
-                    opts.round, opts.k, opts.dim
+                    "{}-abs-r{}-k{}-d{}.dat",
+                    opts.dist_fn, opts.round, opts.k, opts.dim
                 ))?,
         );
     }
