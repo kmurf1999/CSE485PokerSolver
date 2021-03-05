@@ -8,7 +8,8 @@ edition = "2018"
 
 [workspace]
 members = [
-    "information_abstraction"
+    "information_abstraction",
+    "server"
 ]
 
 [build]
