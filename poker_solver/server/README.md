@@ -7,6 +7,7 @@ $ curl -X POST http://127.0.0.1:8080/create
 {"game_id":"d1ea6136-4d8f-4827-a842-f8a3ccb2a2f9"}
 
 Join game_id, returns ws url
+
 $ curl -X POST http://127.0.0.1:8080/join -H "Content-Type: Application/Json" -d '{"game_id":"d1ea6136-4d8f-4827-a842-f8a3ccb2a2f9"}'
 
 
