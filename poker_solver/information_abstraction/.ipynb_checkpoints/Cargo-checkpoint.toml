@@ -1,0 +1,18 @@
+[package]
+name = "information_abstraction"
+version = "0.1.0"
+authors = ["Kyle Murphy <kwmurph2@asu.edu>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[build]
+rustflags = ["-C", "target-cpu=native"]
+
+[dependencies]
+itertools = { version = "0.10.0" }
+rust_poker = { version = "0.1.10", features = ["indexer"] }
+rand = { version = "0.7.3", features = [ "small_rng" ] }
+crossbeam = "0.7.3"
+ndarray = { version = "0.13.1", features = ["rayon"] }
+clap = "3.0.0-beta.2" 
+

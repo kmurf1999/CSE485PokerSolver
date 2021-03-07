@@ -12,11 +12,19 @@ members = [
     "server"
 ]
 
-[build]
-rustflags = ["-C", "target-cpu=native"]
+[target.'cfg(any(windows, unix))']
+rustflags = ["-C target-cpu=native"]
+
+[profile.release]
+lto = true
+codegen-units = 1
+# Includes debug information in release builds. Necessary for profiling. Does not
+# slow down the executable.
+debug = true
+opt-level = 3
 
 [dependencies]
-rust_poker = { version = "0.1.10", features = ["indexer"] }
+rust_poker = { version = "0.1.13", features = ["indexer"] }
 rand = { version = "0.7.3", features = [ "small_rng" ] }
 # concurrency
 crossbeam = "0.7.3"
