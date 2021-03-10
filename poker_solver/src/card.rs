@@ -25,7 +25,7 @@ pub fn cards_to_str(cards: &[Card]) -> String {
 ///
 /// higher score is better
 pub fn score_hand(board: &[Card], private_cards: &[Card]) -> u16 {
-    let mut hand = Hand::empty();
+    let mut hand = Hand::default();
     board.into_iter().for_each(|c| {
         hand += CARDS[usize::from(*c)];
     });

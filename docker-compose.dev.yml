@@ -1,0 +1,24 @@
+version: "3.7"
+services:
+  frontend: # React.js frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./frontend:/frontend
+      - "/frontend/node_modules"
+    ports:
+      - 3000:3000
+    stdin_open: true
+
+  server: # backend server
+    build:
+      context: ./poker_solver
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./poker_solver:/server
+    environment:
+      RUST_LOG: info
+    ports:
+      - 3001:3001
+    restart: always
