@@ -1,12 +1,12 @@
 use crate::{mpsc, Clients, Games};
-use poker_solver::codec;
-
 use futures::future::FutureExt;
-use tracing::{info, error, instrument};
 use futures::stream::StreamExt;
 use futures::SinkExt;
+use poker_solver::codec;
+use tokio::time::{self, Duration};
+use tracing::{error, info, instrument};
 
-use warp::ws::{WebSocket, self};
+use warp::ws::{self, WebSocket};
 
 /// Handles connection to a single client
 /// forwards incoming client messages to the game server
@@ -22,12 +22,33 @@ pub async fn client_connection(ws: WebSocket, client_id: String, games: Games, c
         }
     }));
 
-    let game_id: String = {
-        let mut clients = clients.write().await;
-        let client = clients.get_mut(&client_id).expect("not present");
-        client.sender = Some(client_sender);
-        client.game_id.clone()
-    };
+    // wait for client to join game
+    let mut interval = time::interval(Duration::from_secs(1));
+    loop {
+        interval.tick().await;
+        if clients
+            .read()
+            .await
+            .get(&client_id)
+            .expect("not present")
+            .game_id
+            .is_some()
+        {
+            break;
+        }
+    }
+
+    // TODO don't force unwrap
+    clients.write().await.get_mut(&client_id).unwrap().sender = Some(client_sender);
+    let game_id = clients
+        .read()
+        .await
+        .get(&client_id)
+        .unwrap()
+        .game_id
+        .as_ref()
+        .unwrap()
+        .clone();
 
     let mut game_sender = games.read().await.get(&game_id).unwrap().sender.clone();
 
@@ -84,7 +105,7 @@ pub async fn client_connection(ws: WebSocket, client_id: String, games: Games, c
         .unwrap()
         .clients
         .iter()
-        .position(|x| x.0 == client_id)
+        .position(|c| *c == client_id)
         .unwrap();
     games
         .write()

@@ -19,4 +19,3 @@ bytes = "0.6.0"
 clap = "3.0.0-beta.2"
 ndarray = { version = "0.13.1", features = ["rayon"] }
 poker_solver = { path = ".." }
-client = { path = "../client" }

@@ -13,6 +13,7 @@ pub enum PokerEvent {
     GameEnd,
     HandStart {
         stacks: [u32; MAX_PLAYERS],
+        position: [String; MAX_PLAYERS],
     },
     PostBlinds {
         stacks: [u32; MAX_PLAYERS],
