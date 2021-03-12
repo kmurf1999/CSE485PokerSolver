@@ -2,8 +2,8 @@ import { Button, TextField, makeStyles, Box } from '@material-ui/core';
 import { Ellipse } from 'react-shapes';
 import './App.css';
 import { w3cwebsocket as W3CWebSocket } from "websocket";
-import React, { useEffect, useState, Component } from 'react';
-import * as url from "url";
+import React, { useEffect, useState } from 'react';
+
 // import { ReactComponent as card } from './2C.svg'
 
 const BASE_URI = 'http://localhost:3001';
