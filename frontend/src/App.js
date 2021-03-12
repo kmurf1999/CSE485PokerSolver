@@ -2,43 +2,47 @@ import { Button, TextField, makeStyles, Box } from '@material-ui/core';
 import { Ellipse } from 'react-shapes';
 import './App.css';
 import { w3cwebsocket as W3CWebSocket } from "websocket";
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, Component } from 'react';
+import * as url from "url";
 // import { ReactComponent as card } from './2C.svg'
 
 const BASE_URI = 'http://localhost:3001';
 
-function create_game() {
-  return new Promise((resolve, reject) => {
-    fetch(`${BASE_URI}/create`, {
-      method: 'POST',
-    })
-    .then(res => res.json())
-    .then(res => resolve(res))
-    .catch(err => reject(err));
+
+
+//function create_game() {
+//  return new Promise((resolve, reject) => {
+//    fetch(`${BASE_URI}/create`, {
+//      method: 'POST',
+//    })
+//    .then(res => res.json())
+//    .then(res => resolve(res))
+//    .catch(err => reject(err));
+//  })
+//}
+
+function join_game() {
+  return new Promise(() => {
+    fetch('http://localhost:3001/join', {
+        method: 'POST',
+        })
+      .then(response => response.json())
+        .then(responseData => {
+
+            let client_id = responseData['client_id']
+            let wsurl = responseData['url']
+            return new W3CWebSocket(wsurl);
+        })
   })
+
 }
 
-function join_game(game_id) {
-  return new Promise((resolve, reject) => {
-    fetch(`${BASE_URI}/join`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ game_id })
-    })
-    .then(res => res.json())
-    .then(res => resolve(res))
-    .catch(err => reject(err));
-  })
-}
+//function connect() {
+//  const { client_id, url } = join_game();
+//  return new W3CWebSocket();
+//}
 
-async function connect() {
-  const { game_id } = await create_game();
-  console.log(game_id);
-  let { url, client_id } = await join_game(game_id);
-  return new W3CWebSocket(url);
-}
+
 
 const useStyles = makeStyles((theme) => ({
   root: {
@@ -49,8 +53,8 @@ const useStyles = makeStyles((theme) => ({
 }));
 
 export default function App() {
-  // const classes = useStyles();
-  let [client, setClient] = useState(null);
+  //  const classes = useStyles();
+  let [ client, setClient] = useState(null);
   let [stacks, setStacks] = useState([0, 0]);
   let [wagers, setWagers] = useState([0, 0]);
   let [pot, setPot] = useState(0);
@@ -58,18 +62,19 @@ export default function App() {
 
   useEffect(() => {
     if (client === null) {
-      connect().then(client => {
+      join_game().then(client => {
         client.onmessage = (message) => handleMessage(JSON.parse(message.data));
         client.onopen = () => {
-          console.log('connected');
+          console.warn('connected');
         }
         client.onclose = () => {
-          console.log('disconnected');
+          console.warn('disconnected');
         }
         setClient(client);
       });
     }
-  });
+  }
+  );
 
   function handleMessage(message) {
     const eventType = typeof message.event === "string" ? message.event : Object.keys(message.event)[0];
@@ -105,7 +110,7 @@ export default function App() {
         setPot(pot);
         break;
       }
-   
+
       default: break;
     }
   }
@@ -114,7 +119,7 @@ export default function App() {
     <div>
       {/* <card className = 'test-card' /> */}
       <Box p = {1} display="flex" alignItems = "center" justifyContent = "center">
-        
+
         <Ellipse rx={350} ry={200} fill={{color:'#14B32D'}} stroke={{color:'#14B32D'}} strokeWidth={3} />
       </Box>
 
