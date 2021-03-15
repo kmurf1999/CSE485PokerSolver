@@ -12,6 +12,7 @@ function suitToChar(suit) {
     case 1: return 'H';
     case 2: return 'C';
     case 3: return 'D';
+    case 4: return 'B';
     default: return '';
   }
 }
@@ -30,8 +31,12 @@ function rankToChar(rank) {
 
 function Card({ index }) {
   const classes = useStyles();
-  const rank = rankToChar(index % 13);
-  const suit = suitToChar(Math.floor(index / 14));
+  let rank = rankToChar(index % 13);
+  let suit = suitToChar(Math.floor(index / 14));
+    if (index === 99){
+        rank = 1
+        suit = 'B'
+    }
   return (
     <div className={classes.card}>
       <img 
@@ -72,10 +77,8 @@ function Join_game(game_id) {
 }
 
 async function connect() {
-  //const { game_id } = await Join_game();
-  //console.log(game_id);
-  let { url } = await Join_game();
-  return {client: W3CWebSocket(url), clientId: url};
+  const { url, client_id } = await Join_game();
+  return {client: W3CWebSocket(url), clientid: client_id};
 }
 
 const useStyles = makeStyles((theme) => ({
@@ -157,48 +160,76 @@ const useStyles = makeStyles((theme) => ({
 }));
 
 export default function App() {
-  // const classes = useStyles();
+   const classes = useStyles();
   let [client, setClient] = useState(null);
   let [clientId, setClientId] = useState(null);
   let [stacks, setStacks] = useState([0, 0]);
   let [wagers, setWagers] = useState([0, 0]);
   let [pot, setPot] = useState(0);
-  let [boardCards, setBoardCards] = useState([52, 52, 52, 52, 52]);
-  let [ourCards, setOurCards] = useState([52, 52]);
+  let [boardCards, setBoardCards] = useState([99, 99, 99, 99, 99]);
+  let [ourCards, setOurCards] = useState([99, 99]);
+  let [round, setRound ] = useState(null)
 
-  const classes = useStyles();
 
   useEffect(() => {
     if (client === null) {
-      connect().then(({ client, clientId}) => {
-        client.onmessage = (message) => handleMessage(JSON.parse(message.data));
+      connect().then(({client, clientid}) => {
+          setClient(client)
+          setClientId(clientid)
+
+
+        client.onmessage = (message) => HandleMessage(JSON.parse(message.data));
         client.onopen = () => {
           console.log('connected');
+
         }
         client.onclose = () => {
           console.log('disconnected');
         }
-        setClient(client);
-        setClientId(clientId);
       });
     }
+    setClientId(clientId)
   });
-
-  function handleMessage(message) {
+  function HandleMessage(message) {
       //TODO handling messages now works, we have to implement what to do in each event
     const eventType = typeof message.event === "string" ? message.event : Object.keys(message.event)[0];
+
     switch (eventType) {
       case 'GameStart':
-          console.log("FINALLLYYYYY")
         break;
       case 'GameEnd':
         break;
       case 'HandStart':
+          console.log(clientId)
         break;
       case 'HandEnd':
         break;
       case 'DealCards': {
-        const { cards, round } = message.event['DealCards'];
+        const { round, cards } = message.event['DealCards'];
+          setRound(round)
+        switch (round) {
+            case 'PREFLOP':
+                setOurCards(cards)
+                break;
+            case 'FLOP':
+                cards[3] = 99
+                cards[4] = 99
+                setBoardCards(cards)
+                break;
+            case 'TURN':
+                cards[4] = 99
+                setBoardCards(cards)
+                break;
+            case 'RIVER':
+                setBoardCards(cards)
+
+                cards[0] = 99
+                cards[1] = 99
+                cards[2] = 99
+                cards[3] = 99
+                cards[4] = 99
+                break;
+        }
         break;
       }
       case 'PostBlinds': {
@@ -230,8 +261,8 @@ export default function App() {
         <div className={classes.felt}/>
         <div className={classes.villan}>
           <div className={classes.privateCards}>
-            <Card index={0}/>
-            <Card index={1}/>
+            <Card index={99}/>
+            <Card index={99}/>
           </div>
           <div className={classes.wager}>
           </div>
@@ -241,20 +272,20 @@ export default function App() {
               Pot: {pot}
             </div>
             <div className={classes.boardCards}>
-              <Card index={0}/>
-              <Card index={1}/>
-              <Card index={0}/>
-              <Card index={1}/>
-              <Card index={0}/>
+              <Card index={boardCards[0]}/>
+              <Card index={boardCards[1]}/>
+              <Card index={boardCards[2]}/>
+              <Card index={boardCards[3]}/>
+              <Card index={boardCards[4]}/>
             </div>
         </div>
         <div className={classes.hero}>
             <div className={classes.wager}>
               
             </div>
-            <div className={classes.privateCards}>  
-              <Card index={0}/>
-              <Card index={1}/>
+            <div className={classes.privateCards}>
+              <Card index={ourCards[0]}/>
+              <Card index={ourCards[1]}/>
             </div>
         </div>
       </div>
