@@ -1,0 +1,30 @@
+npm notice 
+npm notice New patch version of npm available! 7.6.0 -> 7.6.2
+npm notice Changelog: <https://github.com/npm/cli/releases/tag/v7.6.2>
+npm notice Run `npm install -g npm@7.6.2` to update!
+npm notice 
+npm ERR! code ENOENT
+npm ERR! syscall open
+npm ERR! path /Users/kmurph/Documents/CSE485PokerSolver/scripts/package.json
+npm ERR! errno -2
+npm ERR! enoent ENOENT: no such file or directory, open '/Users/kmurph/Documents/CSE485PokerSolver/scripts/package.json'
+npm ERR! enoent This is related to npm not being able to find a file.
+npm ERR! enoent 
+
+npm ERR! A complete log of this run can be found in:
+npm ERR!     /Users/kmurph/.npm/_logs/2021-03-10T00_32_11_408Z-debug.log
+npm notice 
+npm notice New patch version of npm available! 7.6.0 -> 7.6.2
+npm notice Changelog: <https://github.com/npm/cli/releases/tag/v7.6.2>
+npm notice Run `npm install -g npm@7.6.2` to update!
+npm notice 
+npm ERR! code ENOENT
+npm ERR! syscall open
+npm ERR! path /Users/kmurph/Documents/CSE485PokerSolver/scripts/package.json
+npm ERR! errno -2
+npm ERR! enoent ENOENT: no such file or directory, open '/Users/kmurph/Documents/CSE485PokerSolver/scripts/package.json'
+npm ERR! enoent This is related to npm not being able to find a file.
+npm ERR! enoent 
+
+npm ERR! A complete log of this run can be found in:
+npm ERR!     /Users/kmurph/.npm/_logs/2021-03-10T00_32_14_599Z-debug.log

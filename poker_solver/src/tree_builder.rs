@@ -26,7 +26,7 @@ pub struct TreeBuilderOptions {
 pub struct TreeBuilder<'a> {
     options: &'a TreeBuilderOptions,
     tree: Tree<GameNode>,
-    an_counts: [u32; 2],
+    action_node_count: u32,
 }
 
 impl<'a> TreeBuilder<'a> {
@@ -36,7 +36,7 @@ impl<'a> TreeBuilder<'a> {
         let mut builder = TreeBuilder {
             tree: Tree::<GameNode>::new(),
             options,
-            an_counts: [0; 2],
+            action_node_count: 0,
         };
         // create initial state
         let initial_state = match options.blinds {
@@ -63,13 +63,13 @@ impl<'a> TreeBuilder<'a> {
         let node = self.tree.add_node(
             Some(parent),
             GameNode::Action {
-                index: self.an_counts[usize::from(state.current_player_idx())],
+                index: self.action_node_count,
                 player: state.current_player_idx(),
                 actions: Vec::new(),
             },
         );
         // increment number of action nodes
-        self.an_counts[usize::from(state.current_player_idx())] += 1;
+        self.action_node_count += 1;
         // build each action
         state.valid_actions().iter().for_each(|action| {
             if let Action::BET(_) = action {

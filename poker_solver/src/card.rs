@@ -7,6 +7,8 @@ use std::iter::FromIterator;
 /// where n is 4 * rank + suit
 pub type Card = u8;
 
+pub const CARD_COUNT: u8 = 52;
+
 /// Turns an array of cards into a human-readable string
 pub fn cards_to_str(cards: &[Card]) -> String {
     let mut chars: Vec<char> = Vec::new();
@@ -25,7 +27,7 @@ pub fn cards_to_str(cards: &[Card]) -> String {
 ///
 /// higher score is better
 pub fn score_hand(board: &[Card], private_cards: &[Card]) -> u16 {
-    let mut hand = Hand::empty();
+    let mut hand = Hand::default();
     board.into_iter().for_each(|c| {
         hand += CARDS[usize::from(*c)];
     });

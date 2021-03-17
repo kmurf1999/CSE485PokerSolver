@@ -2,8 +2,8 @@ use clap::Clap;
 
 use information_abstraction::distance;
 use information_abstraction::histogram::read_ehs_histograms;
-use information_abstraction::ochs::read_ochs_vectors;
 use information_abstraction::mpi_kmeans::MPIKmeans;
+use information_abstraction::ochs::read_ochs_vectors;
 use mpi::traits::*;
 use ndarray::prelude::*;
 use std::result::Result;
@@ -82,9 +82,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     classifier.run(&dataset, world, dist_fn, opts.max_iter, true);
 
     if is_root {
-        let assignments: Vec<u32> = classifier.assignments[0..dataset.len_of(Axis(0))]
+        let assignments: Vec<u16> = classifier.assignments[0..dataset.len_of(Axis(0))]
             .iter()
-            .map(|d| *d as u32)
+            .map(|d| *d as u16)
             .collect();
         file.unwrap().write_slice_to_file(&assignments)?;
     }
