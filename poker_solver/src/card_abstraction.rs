@@ -42,7 +42,7 @@ impl CardAbstraction {
     /// };
     /// let card_abs = CardAbstraction::load(options).unwrap();
     /// ```
-    fn load(options: CardAbstractionOptions) -> Result<Self, Box<dyn Error>> {
+    pub fn load(options: CardAbstractionOptions) -> Result<Self, Box<dyn Error>> {
         let indexer = match options.round {
             BettingRound::PREFLOP => HandIndexer::init(1, vec![2]),
             BettingRound::FLOP => HandIndexer::init(2, vec![2, 3]),
@@ -78,12 +78,12 @@ impl CardAbstraction {
     }
     #[inline(always)]
     /// gets the number of buckets in this abstraction
-    const fn n_buckets(&self) -> usize {
+    pub const fn n_buckets(&self) -> usize {
         self.n_buckets
     }
     #[inline(always)]
     /// gets the number of cannonical hands in this round
-    const fn round_size(&self) -> usize {
+    pub const fn round_size(&self) -> usize {
         self.round_size
     }
 }

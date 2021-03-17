@@ -2,9 +2,13 @@ use std::fmt;
 
 use crate::action::Action;
 
+/// The type of terminal node
 pub enum TerminalType {
+    /// Atleast one player has no chips left
     AllIn,
+    /// A player has called on the final round of betting
     Showdown,
+    /// A player has folded
     Fold,
 }
 

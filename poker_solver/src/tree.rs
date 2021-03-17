@@ -18,6 +18,7 @@ pub struct Node<T> {
 }
 
 impl<T> Node<T> {
+    /// adds a child node index into the children array of this node
     pub fn add_child(&mut self, node_idx: NodeIndex) {
         self.children.push(node_idx);
     }
