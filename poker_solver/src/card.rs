@@ -7,6 +7,8 @@ use std::iter::FromIterator;
 /// where n is 4 * rank + suit
 pub type Card = u8;
 
+pub const CARD_COUNT: u8 = 52;
+
 /// Turns an array of cards into a human-readable string
 pub fn cards_to_str(cards: &[Card]) -> String {
     let mut chars: Vec<char> = Vec::new();

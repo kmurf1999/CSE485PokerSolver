@@ -33,7 +33,7 @@ impl fmt::Display for Action {
 /// List of available actions
 ///
 /// Note: Bet and Raise sizes are invalid
-pub static ACTIONS: &'static [Action; 5] = &[
+pub static ACTIONS: &[Action; 5] = &[
     Action::BET(1),
     Action::RAISE(1),
     Action::FOLD,

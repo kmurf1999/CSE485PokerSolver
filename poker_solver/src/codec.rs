@@ -48,3 +48,28 @@ pub struct PokerMessage {
     /// game message
     pub event: PokerEvent,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action::Action;
+    use serde_json::json;
+
+    #[test]
+    fn test_send_action_to_string() {
+        assert_eq!(
+            json!(PokerEvent::SendAction {
+                action: Action::BET(10),
+            })
+            .to_string(),
+            "{\"SendAction\":{\"action\":{\"BET\":10}}}"
+        );
+        assert_eq!(
+            json!(PokerEvent::SendAction {
+                action: Action::FOLD,
+            })
+            .to_string(),
+            "{\"SendAction\":{\"action\":\"FOLD\"}}"
+        );
+    }
+}
