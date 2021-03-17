@@ -1,6 +1,8 @@
 # dont clone data files
 *.dat
+*.zip
 *.code-workspace
+.DS_Store
 
 # and build folder
 build/
