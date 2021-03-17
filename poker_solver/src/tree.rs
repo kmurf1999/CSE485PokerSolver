@@ -23,11 +23,13 @@ impl<T> Node<T> {
     }
 }
 
-impl<T> Tree<T> {
-    /// Create an empty tree
-    pub fn new() -> Tree<T> {
+impl<T> Default for Tree<T> {
+    fn default() -> Self {
         Tree { nodes: Vec::new() }
     }
+}
+
+impl<T> Tree<T> {
     /// Add a new node into the tree
     pub fn add_node(&mut self, parent: Option<NodeIndex>, data: T) -> NodeIndex {
         let next_index = self.nodes.len();
@@ -38,10 +40,12 @@ impl<T> Tree<T> {
         });
         next_index
     }
+    /// get a mutable reference to a node at index
     pub fn get_node_mut(&mut self, node_idx: NodeIndex) -> &mut Node<T> {
         assert!(node_idx < self.nodes.len());
         &mut self.nodes[node_idx]
     }
+    /// gets a reference to to a node at index
     pub fn get_node(&self, node_idx: NodeIndex) -> &Node<T> {
         assert!(node_idx < self.nodes.len());
         &self.nodes[node_idx]
@@ -80,7 +84,7 @@ impl<'a, T> Iterator for TreeIter<'a, T> {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-// }
+#[cfg(test)]
+mod tests {
+    use super::*;
+}

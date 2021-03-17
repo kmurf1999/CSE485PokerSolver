@@ -141,7 +141,7 @@ mod tests {
         for card in &flop {
             flop_mask |= 1u64 << card;
         }
-        let hand_range = HandRange::from_string("random".to_string());
+        let hand_range = HandRange::from_string("22+,A2+,KT+,QT+,JT+".to_string());
         let mut cards: [u8; 7] = [0, 0, flop[0], flop[1], flop[2], 0, 0];
         b.iter(|| {
             let mut sd = SparseAndDense::default();
@@ -165,7 +165,7 @@ mod tests {
                     sd.sparse_to_dense(cannon_index as usize);
                 }
             }
-            assert_eq!(sd.len(), 630685);
+            assert_eq!(sd.len(), 180124);
         });
     }
 }

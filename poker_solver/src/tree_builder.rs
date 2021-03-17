@@ -4,8 +4,10 @@ use crate::round::BettingRound;
 use crate::state::GameState;
 use crate::tree::Tree;
 
+/// Options that specify how to build the game tree
 pub struct TreeBuilderOptions {
     /// value of the blinds
+    /// [big blind, small blind]
     /// if this option is set, `pot` is ignored
     pub blinds: Option<[u32; 2]>,
     /// The initial stack size of each player
@@ -16,16 +18,21 @@ pub struct TreeBuilderOptions {
     /// if this option is not set, it defaults to `BettingRound::PREFLOP`
     pub round: Option<BettingRound>,
     /// bet sizes expressed as a fraction of the pot
+    /// An array of bet sizes for each round
     pub bet_sizes: [Vec<f64>; 4],
     /// raise sizes as expressed as a fraction of the pot
+    /// An array of raise sizes for each round
     pub raise_sizes: [Vec<f64>; 4],
 }
 
 /// A helper class to build a game tree
 /// starts from initial parameters set by using the `TreeBuilderOptions` struct
 pub struct TreeBuilder<'a> {
+    /// options used to build the game tree
     options: &'a TreeBuilderOptions,
+    /// the game tree
     tree: Tree<GameNode>,
+    /// number of action nodes in the game tree
     action_node_count: u32,
 }
 
@@ -34,7 +41,7 @@ impl<'a> TreeBuilder<'a> {
     /// and return tree
     pub fn build(options: &'a TreeBuilderOptions) -> Tree<GameNode> {
         let mut builder = TreeBuilder {
-            tree: Tree::<GameNode>::new(),
+            tree: Tree::<GameNode>::default(),
             options,
             action_node_count: 0,
         };
@@ -167,4 +174,9 @@ impl<'a> TreeBuilder<'a> {
         }
         node
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
 }
