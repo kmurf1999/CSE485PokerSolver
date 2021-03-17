@@ -1,3 +1,6 @@
+//!
+//! # Poker Solver
+//!
 #![feature(array_map)]
 #![allow(soft_unstable)]
 #![feature(test)]

@@ -4,7 +4,8 @@ use std::fmt;
 /// Represents a player action
 #[derive(Debug, Copy, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub enum Action {
-    /// Bet size in chips
+    /// Bet action
+    /// value is size in chips
     BET(u32),
     /// Raise is a "by value"
     /// meaning amount of chips past the call value
@@ -18,6 +19,12 @@ pub enum Action {
 }
 
 /// For printing actions to terminal
+///
+/// # Example
+///
+/// ```
+/// println!("{}", Action::FOLD);
+/// ```
 impl fmt::Display for Action {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         return match self {

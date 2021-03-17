@@ -1,40 +1,54 @@
 use crate::action::Action;
 use serde::{Deserialize, Serialize};
 
+/// starting stack size
 pub const STACK_SIZE: u32 = 10000;
+/// maximum players in a game
 pub const MAX_PLAYERS: usize = 2;
+/// min players allowed in a game
 pub const MIN_PLAYERS: usize = 2;
+/// blinds [big, small]
 pub const BLINDS: [u32; 2] = [10, 5];
+/// timeout in seconds for a client taking an action
 pub const ACTION_TIMEOUT: u64 = 30;
 
 #[derive(Debug, Serialize, Deserialize)]
+/// Structure used send and receive game events to and from the server
+/// encodes to json
 pub enum PokerEvent {
+    /// Event sent to clients when game starts
     GameStart,
+    /// Event sent to clients when game ends
     GameEnd,
+    /// Event sent to clients when hand starts
     HandStart {
         stacks: [u32; MAX_PLAYERS],
         position: [String; MAX_PLAYERS],
     },
+    /// Event send to clients when blinds are posted
     PostBlinds {
         stacks: [u32; MAX_PLAYERS],
         wagers: [u32; MAX_PLAYERS],
         blinds: [u32; MIN_PLAYERS],
         pot: u32,
     },
+    /// Event sent to a single client when they need to make an action
     RequestAction,
-    SendAction {
-        action: Action,
-    },
+    /// Event send to the server from the client when the client takes an action
+    SendAction { action: Action },
+    /// Event sent to all clients when a client action has been confirmed
     AlertAction {
         action: Action,
         wagers: [u32; MAX_PLAYERS],
         stacks: [u32; MAX_PLAYERS],
         pot: u32,
     },
+    /// Event sent to clients when hand has ended
     HandEnd {
         pot: u32,
         stacks: [u32; MAX_PLAYERS],
     },
+    /// Event send to client or clients when cards are dealt
     DealCards {
         round: crate::round::BettingRound,
         cards: Vec<u8>,
@@ -42,6 +56,7 @@ pub enum PokerEvent {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+/// Message which includes the sender's `client_id`
 pub struct PokerMessage {
     /// client id message was from, or none if from server
     pub from: Option<String>,

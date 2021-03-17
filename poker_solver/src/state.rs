@@ -120,7 +120,7 @@ impl GameState {
     /// ```
     pub fn new(pot: u32, stacks: [u32; 2], round: Option<BettingRound>) -> GameState {
         GameState {
-            round: round.unwrap_or_else(|| BettingRound::PREFLOP),
+            round: round.unwrap_or(BettingRound::PREFLOP),
             pot,
             players: stacks.map(PlayerState::new),
             current_player: 0,
@@ -151,7 +151,7 @@ impl GameState {
         players[1].stack -= small_blind;
         players[1].wager = small_blind;
         GameState {
-            round: round.unwrap_or_else(|| BettingRound::PREFLOP),
+            round: round.unwrap_or(BettingRound::PREFLOP),
             pot: big_blind + small_blind,
             players,
             current_player: 1,

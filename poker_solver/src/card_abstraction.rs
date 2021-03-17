@@ -5,12 +5,17 @@ use std::error::Error;
 use std::fs::{File, OpenOptions};
 use std::result::Result;
 
+/// Options to load Card abstraction
+/// abstraction should be stored in `data` folder
 pub struct CardAbstractionOptions {
     /// abstraction type
     /// null, emd, ochs, pa (potential aware)
     pub abs_type: String,
+    /// which round this abstraction if for
     pub round: BettingRound,
+    /// buckets per abstraction
     pub k: usize,
+    /// dimension of data used to generate abstraction
     pub d: usize,
 }
 
@@ -25,6 +30,18 @@ pub struct CardAbstraction {
 }
 
 impl CardAbstraction {
+    /// Loads an abstraction from a file
+    ///
+    /// # Example
+    /// ```
+    /// let options = CardAbstractionOptions {
+    ///   abs_type: "emd".to_string(),
+    ///   k: 5000,
+    ///   d: 50,
+    ///   round: BettingRound::FLOP,
+    /// };
+    /// let card_abs = CardAbstraction::load(options).unwrap();
+    /// ```
     fn load(options: CardAbstractionOptions) -> Result<Self, Box<dyn Error>> {
         let indexer = match options.round {
             BettingRound::PREFLOP => HandIndexer::init(1, vec![2]),
@@ -60,10 +77,12 @@ impl CardAbstraction {
         Ok(abs)
     }
     #[inline(always)]
+    /// gets the number of buckets in this abstraction
     const fn n_buckets(&self) -> usize {
         self.n_buckets
     }
     #[inline(always)]
+    /// gets the number of cannonical hands in this round
     const fn round_size(&self) -> usize {
         self.round_size
     }
