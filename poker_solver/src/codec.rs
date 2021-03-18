@@ -24,6 +24,7 @@ pub enum PokerEvent {
     RequestAction,
     SendAction {
         action: Action,
+
     },
     AlertAction {
         action: Action,

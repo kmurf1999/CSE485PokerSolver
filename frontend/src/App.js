@@ -81,11 +81,6 @@ async function connect() {
   return {client: W3CWebSocket(url), clientid: client_id};
 }
 
-async function send(){
-    const {ws, clientID} = await connect();
-    return {ws: W3CWebSocket(ws), clientID: clientID}
-}
-
 const useStyles = makeStyles((theme) => ({
   root: {
     '& > *': {
@@ -174,6 +169,7 @@ export default function App() {
   let [boardCards, setBoardCards] = useState([99, 99, 99, 99, 99]);
   let [ourCards, setOurCards] = useState([99, 99]);
   let [round, setRound ] = useState(null)
+    let [bet, setBet] = useState('')
 
   useEffect(() => {
     if (client === null) {
@@ -261,7 +257,7 @@ export default function App() {
       }
         case 'RequestAction':
             //CALL payload
-            client.send(JSON.stringify({SendAction: {action: 'CALL' , from: clientId}}))
+            //client.send(JSON.stringify({SendAction: {action: 'CALL' , from: clientId}}))
             //TODO: Implement payloads for (CALL, CHECK, FOLD, RAISE) Buttons
       case 'SendAction':
         break;
@@ -277,7 +273,43 @@ export default function App() {
     }
   }
 
-  return (
+  function HandleChange(e){
+      setBet(e.target.value);
+  }
+
+
+  //BET
+    //TODO: Fix server codec for BET and RAISE actions ?
+  function handleClick(){
+      console.log(bet)
+      /*if (client !== null) {
+          client.send(JSON.stringify({SendAction: {action: 'BET ' , from: clientId}}))
+      }*/
+  }
+
+    function Bet() {
+        return undefined;
+    }
+
+    function Fold() {
+        if (client !== null) {
+            client.send(JSON.stringify({SendAction: {action: 'FOLD', from: clientId}}))
+        }
+    }
+
+    function Check() {
+        if (client !== null) {
+            client.send(JSON.stringify({SendAction: {action: 'CHECK' , from: clientId}}))
+        }
+    }
+
+    function Call() {
+        if (client !== null) {
+            client.send(JSON.stringify({SendAction: {action: 'CALL', from: clientId}}))
+        }
+    }
+
+    return (
     <div className={classes.game}>
       <div className={classes.table}>
         <div className={classes.felt}/>
@@ -315,22 +347,24 @@ export default function App() {
 
       <div className={classes.actions}>
         <Box p = {1} display="flex" alignItems="center" justifyContent="center">
-        <Button variant = "outlined" color="primary">Fold</Button>
-        <Button variant = "outlined" color="primary">Check</Button>
-        <Button variant = "outlined" color="primary">Call</Button>
+        <Button onClick={Fold} variant = "outlined" color="primary">Fold</Button>
+        <Button onClick={Check} variant = "outlined" color="primary">Check</Button>
+        <Button onClick={Call} variant = "outlined" color="primary">Call</Button>
         </Box>
 
         <Box p = {1} display="flex" alignItems="center" justifyContent="center">
-          <Button variant = "outlined" color="primary">Min Bet</Button>
-          <Button variant = "outlined" color="primary">Bet Half Pot</Button>
-          <Button variant = "outlined" color="primary">Bet Pot</Button>
-          <Button variant = "outlined" color="primary">All In</Button>
-          <TextField id="Bet-Entry" label = "Bet Amount" variant = "outlined" />
+          <Button onClick={Bet} variant = "outlined" color="primary">Min Bet</Button>
+          <Button onClick={Bet} variant = "outlined" color="primary">Bet Half Pot</Button>
+          <Button onClick={Bet} variant = "outlined" color="primary">Bet Pot</Button>
+          <Button onClick={Bet} variant = "outlined" color="primary">All In</Button>
+          <TextField onChange={HandleChange} id="Bet-Entry" label = "Bet Amount" variant = "outlined" />
         </Box>
 
         <Box p = {1} display = "flex" alignItems="center" justifyContent="center">
-          <Button variant = "outlined" color="primary">Bet</Button>
+            <Button onClick={handleClick} variant = "outlined" color="primary">Bet</Button>
         </Box>
+
+
       </div>
 
       <div className={classes.history}>
