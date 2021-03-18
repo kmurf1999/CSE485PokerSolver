@@ -81,6 +81,11 @@ async function connect() {
   return {client: W3CWebSocket(url), clientid: client_id};
 }
 
+async function send(){
+    const {ws, clientID} = await connect();
+    return {ws: W3CWebSocket(ws), clientID: clientID}
+}
+
 const useStyles = makeStyles((theme) => ({
   root: {
     '& > *': {
@@ -170,15 +175,11 @@ export default function App() {
   let [ourCards, setOurCards] = useState([99, 99]);
   let [round, setRound ] = useState(null)
 
-
   useEffect(() => {
     if (client === null) {
       connect().then(({client, clientid}) => {
-          setClient(client)
-          setClientId(clientid)
 
 
-        client.onmessage = (message) => HandleMessage(JSON.parse(message.data));
         client.onopen = () => {
           console.log('connected');
 
@@ -186,10 +187,30 @@ export default function App() {
         client.onclose = () => {
           console.log('disconnected');
         }
+
+          setClient(client)
+          setClientId(clientid)
       });
-    }
-    setClientId(clientId)
-  });
+    } else {
+
+        //CLIENT isn't null anymore
+        client.onmessage = (message) => {
+            HandleMessage(JSON.parse(message.data));
+
+        }
+        client.onopen = () => {
+            console.log('connected');
+
+        }
+
+        client.onclose = () => {
+            console.log('disconnected');
+        }
+
+        }
+
+
+    });
   function HandleMessage(message) {
       //TODO handling messages now works, we have to implement what to do in each event
     const eventType = typeof message.event === "string" ? message.event : Object.keys(message.event)[0];
@@ -200,7 +221,6 @@ export default function App() {
       case 'GameEnd':
         break;
       case 'HandStart':
-          console.log(clientId)
         break;
       case 'HandEnd':
         break;
@@ -239,8 +259,10 @@ export default function App() {
         setPot(pot);
         break;
       }
-      case 'RequestAction':
-        break;
+        case 'RequestAction':
+            //CALL payload
+            client.send(JSON.stringify({SendAction: {action: 'CALL' , from: clientId}}))
+            //TODO: Implement payloads for (CALL, CHECK, FOLD, RAISE) Buttons
       case 'SendAction':
         break;
       case 'AlertAction': {
