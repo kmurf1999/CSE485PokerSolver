@@ -541,4 +541,40 @@ impl GameState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    
+    #[test]
+    fn test_PlayerState() {
+        let ps = PlayerState::default();
+        assert_eq!(ps.stack(), 0);
+        assert_ne!(ps.stack(), 1);
+        assert_ne!(ps.stack(), -1);
+        assert_eq!(ps.wager(), 0);
+        assert_ne!(ps.wager(), 1);
+        assert_ne!(ps.wager(), -1);
+        assert_eq!(ps.cards(), [52; 2]);
+        assert_eq!(ps.folded(), false);
+        assert_ne!(ps.folded(), true);
+    }
+
+    fn test_PS() {
+        let ps = PlayerState::new(250);
+        assert_eq!(ps.stack(), 250);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_valid_actions() {
+        let mut state = GameState::new(500, [1000, 1000]);
+        let mut rng = rand::thread_rng();
+        assert_eq!(state.valid_actions().len(), 3);
+        assert_eq!(game_state.current_player_idx(), 0);
+        game_state.deal_cards(&mut rng);
+        game_state = game_state.apply_action(&mut rng, Action::CALL);
+        assert_eq!(state.valid_actions().len(), 5);
+        assert_eq!(game_state.current_player_idx(), 1);
+        game_state = game_state.apply_action(&mut rng, Action::RAISE);
+        assert_eq!(state.valid_actions().len(), 2);
+        assert_eq!(game_state.current_player_idx(), 0);
+        game_state = game_state.apply_action(&mut rng, Action::RAISE);
+    }
 }
