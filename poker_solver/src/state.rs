@@ -4,6 +4,7 @@ use std::cmp::min;
 
 use crate::action::{Action, ACTIONS};
 use crate::card::Card;
+use crate::constants::*;
 use crate::round::BettingRound;
 
 /// We'll use this for now to define min-bets
@@ -46,7 +47,7 @@ pub struct GameState {
     /// The size in chips of the pot
     pot: u32,
     /// The state of each player
-    players: [PlayerState; 2],
+    players: [PlayerState; MAX_PLAYERS],
     /// index of current player
     current_player: u8,
     /// Community Cards
@@ -54,6 +55,8 @@ pub struct GameState {
     board: [Card; 5],
     /// Has betting finished for the current round
     bets_settled: bool,
+    /// number of players in this game
+    player_count: usize,
 }
 
 impl PlayerState {
@@ -89,19 +92,6 @@ impl PlayerState {
     }
 }
 
-impl Default for GameState {
-    fn default() -> Self {
-        GameState {
-            round: BettingRound::PREFLOP,
-            pot: 0,
-            players: [PlayerState::default(), PlayerState::default()],
-            current_player: 0,
-            board: [52; 5],
-            bets_settled: false,
-        }
-    }
-}
-
 impl GameState {
     /// Create a game state object with pot set to initial pot size
     /// and player stacks set to stack size
@@ -118,11 +108,17 @@ impl GameState {
     /// let game_state = GameState::new(100, [10000, 10000]);
     /// assert_eq!(game_state.pot(), 100);
     /// ```
-    pub fn new(pot: u32, stacks: [u32; 2], round: Option<BettingRound>) -> GameState {
+    pub fn new(pot: u32, stacks: Vec<u32>, round: Option<BettingRound>) -> GameState {
+        let player_count = stacks.len();
+        let mut players = [PlayerState::default(); MAX_PLAYERS];
+        for i in 0..player_count {
+            players[i] = PlayerState::new(stacks[i]);
+        }
         GameState {
             round: round.unwrap_or(BettingRound::PREFLOP),
             pot,
-            players: stacks.map(PlayerState::new),
+            player_count,
+            players,
             current_player: 0,
             // 52 since its the first invalid card
             board: [52; 5],
@@ -137,13 +133,26 @@ impl GameState {
     /// # Arguments
     ///
     /// * `stacks` The stack size of each player
-    /// * `blidds` Big and small blind size, Big should come before small
+    /// * `blinds` Big and small blind size, Big should come before small
+    /// * `round` optinal initial round, defaults to `BettingRound::PREFLOP`
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use poker_solver::state::GameState;
+    /// let game_state = GameState::init_with_blinds([10000, 10000], [10, 5], None);
+    /// assert_eq!(game_state.pot(), 15);
+    /// ```
     pub fn init_with_blinds(
-        stacks: [u32; 2],
-        blinds: [u32; 2],
+        stacks: Vec<u32>,
+        blinds: Vec<u32>,
         round: Option<BettingRound>,
     ) -> GameState {
-        let mut players = stacks.map(PlayerState::new);
+        let mut players = [PlayerState::default(); MAX_PLAYERS];
+        let player_count = stacks.len();
+        for i in 0..player_count {
+            players[i] = PlayerState::new(stacks[i]);
+        }
         let big_blind = min(stacks[0], blinds[0]);
         players[0].stack -= big_blind;
         players[0].wager = big_blind;
@@ -153,6 +162,7 @@ impl GameState {
         GameState {
             round: round.unwrap_or(BettingRound::PREFLOP),
             pot: big_blind + small_blind,
+            player_count,
             players,
             current_player: 1,
             // 52 since its the first invalid card
@@ -476,7 +486,7 @@ impl GameState {
         self.current_player
     }
     /// Return reference to player at index
-    pub const fn player(&self, player_index: usize) -> &PlayerState {
+    pub fn player(&self, player_index: usize) -> &PlayerState {
         &self.players[player_index]
     }
     /// Return reference to public cards

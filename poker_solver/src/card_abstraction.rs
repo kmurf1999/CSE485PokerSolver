@@ -7,6 +7,7 @@ use std::result::Result;
 
 /// Options to load Card abstraction
 /// abstraction should be stored in `data` folder
+#[derive(Debug)]
 pub struct CardAbstractionOptions {
     /// abstraction type
     /// null, emd, ochs, pa (potential aware)
@@ -20,6 +21,7 @@ pub struct CardAbstractionOptions {
 }
 
 /// Structure for loading card (information) abstraction from a file and into memory
+#[derive(Debug)]
 pub struct CardAbstraction {
     /// number of cannonical cards in this round
     round_size: usize,

@@ -3,6 +3,7 @@ use std::fmt;
 use crate::action::Action;
 
 /// The type of terminal node
+#[derive(Debug)]
 pub enum TerminalType {
     /// Atleast one player has no chips left
     AllIn,
@@ -13,6 +14,7 @@ pub enum TerminalType {
 }
 
 /// Tree structure used to model a poker game tree
+#[derive(Debug)]
 pub enum GameNode {
     /// represents a private card dealing
     PrivateChance,

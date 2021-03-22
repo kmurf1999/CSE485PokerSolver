@@ -19,12 +19,15 @@ pub mod card_abstraction;
 pub mod codec;
 /// Used for iterating over card combinations
 pub mod combos;
+pub mod constants;
 /// A tree node for representing a poker game tree
 pub mod game_node;
 /// Monte-carlo counter factual regret minimization implementation
 pub mod mccfr;
 /// Represents a betting round in poker
 pub mod round;
+/// postflop solver
+pub mod solver;
 /// Maps sparse arrays to dense to save memory
 pub mod sparse_and_dense;
 /// Structures and methods for dealing with game state in texas holdem

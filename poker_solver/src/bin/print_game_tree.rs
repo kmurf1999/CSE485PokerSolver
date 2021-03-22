@@ -40,17 +40,18 @@ fn print_node(tree: &Tree<GameNode>, node: usize, depth: usize) {
 fn main() {
     let options = TreeBuilderOptions {
         blinds: None,
-        stacks: [1000, 1000],
-        pot: Some(100),
-        round: Some(BettingRound::RIVER),
-        bet_sizes: [vec![1.0], vec![1.0], vec![1.0], vec![1.0]],
-        raise_sizes: [vec![], vec![], vec![], vec![1.0]],
+        stacks: vec![10000, 10000],
+        pot: 100,
+        round: BettingRound::FLOP,
+        bet_sizes: vec![
+            vec![vec![0.5], vec![0.5], vec![1.0]],
+            vec![vec![0.5], vec![0.5], vec![1.0]],
+        ],
+        raise_sizes: vec![
+            vec![vec![1.0], vec![1.0], vec![1.0]],
+            vec![vec![1.0], vec![1.0], vec![1.0]],
+        ],
     };
-    let tree = TreeBuilder::build(&options);
-    // tree.iter().for_each(|n| match &n.data {
-    //     _ => {
-    //         println!("Node");
-    //     }
-    // });
+    let tree = TreeBuilder::build(&options).unwrap();
     print_node(&tree, 0, 0);
 }
