@@ -12,6 +12,14 @@ pub struct MCCFRNode {
     player: usize,
 }
 
+impl MCCFRNode {}
+
+pub struct MCCFRTree {
+    arena: Vec<MCCFRNode>,
+}
+
+impl MCCFRTree {}
+
 pub struct MCCFR {
     strategy_interval: u32,
     prune_threshhold: u32,

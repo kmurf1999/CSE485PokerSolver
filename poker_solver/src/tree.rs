@@ -2,6 +2,7 @@
 ///
 /// Nodes are stored in a central arena
 /// and are used to iterate using node indices instead of pointers
+#[derive(Debug)]
 pub struct Tree<T> {
     nodes: Vec<Node<T>>,
 }
@@ -11,6 +12,7 @@ pub type NodeIndex = usize;
 /// Node object for the tree
 ///
 /// Children is a list of node indices instead of pointers
+#[derive(Debug)]
 pub struct Node<T> {
     pub data: T,
     pub parent: Option<NodeIndex>,
@@ -18,6 +20,7 @@ pub struct Node<T> {
 }
 
 impl<T> Node<T> {
+    /// adds a child node index into the children array of this node
     pub fn add_child(&mut self, node_idx: NodeIndex) {
         self.children.push(node_idx);
     }
@@ -53,6 +56,12 @@ impl<T> Tree<T> {
     /// Returns a preorder tree iterator
     pub fn iter(&self) -> TreeIter<T> {
         TreeIter::new(0, &self)
+    }
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.nodes.len() == 0
     }
 }
 

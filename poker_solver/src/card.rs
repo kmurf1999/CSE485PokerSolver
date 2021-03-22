@@ -44,10 +44,10 @@ pub fn cards_to_str(cards: &[Card]) -> String {
 /// ```
 pub fn score_hand(board: &[Card], private_cards: &[Card]) -> u16 {
     let mut hand = Hand::default();
-    board.into_iter().for_each(|c| {
+    board.iter().for_each(|c| {
         hand += CARDS[usize::from(*c)];
     });
-    private_cards.into_iter().for_each(|c| {
+    private_cards.iter().for_each(|c| {
         hand += CARDS[usize::from(*c)];
     });
     evaluate(&hand)

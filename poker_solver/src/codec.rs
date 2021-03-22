@@ -1,16 +1,6 @@
 use crate::action::Action;
+use crate::constants::*;
 use serde::{Deserialize, Serialize};
-
-/// starting stack size
-pub const STACK_SIZE: u32 = 10000;
-/// maximum players in a game
-pub const MAX_PLAYERS: usize = 2;
-/// min players allowed in a game
-pub const MIN_PLAYERS: usize = 2;
-/// blinds [big, small]
-pub const BLINDS: [u32; 2] = [10, 5];
-/// timeout in seconds for a client taking an action
-pub const ACTION_TIMEOUT: u64 = 30;
 
 #[derive(Debug, Serialize, Deserialize)]
 /// Structure used send and receive game events to and from the server
@@ -29,7 +19,7 @@ pub enum PokerEvent {
     PostBlinds {
         stacks: [u32; MAX_PLAYERS],
         wagers: [u32; MAX_PLAYERS],
-        blinds: [u32; MIN_PLAYERS],
+        blinds: [u32; 2],
         pot: u32,
     },
     /// Event sent to a single client when they need to make an action

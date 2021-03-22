@@ -30,7 +30,6 @@ impl CardComboIter {
 impl Iterator for CardComboIter {
     type Item = Vec<Card>;
     fn next(&mut self) -> Option<Vec<Card>> {
-        let mut cards: Vec<Card> = vec![0; self.k];
         let mut pivot = self.k - 1;
         while self.combo[pivot] == self.n - self.k + pivot {
             if pivot == 0 {
@@ -42,9 +41,8 @@ impl Iterator for CardComboIter {
         for i in pivot + 1..self.k {
             self.combo[i] = self.combo[pivot] + i - pivot;
         }
-        for i in 0..self.k {
-            cards[i] = self.cards[self.combo[i]];
-        }
+        // transform combo into card vector
+        let cards: Vec<Card> = self.combo.iter().map(|i| self.cards[*i]).collect();
         Some(cards)
     }
 }
