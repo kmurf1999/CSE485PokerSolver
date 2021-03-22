@@ -28,7 +28,9 @@ pub struct CardAbstraction {
     /// number of buckets in this abstraction
     n_buckets: usize,
     /// actual abstraction buckets
-    pub buckets: Vec<u16>,
+    use_short: bool,
+    pub short_buckets: Vec<u16>,
+    pub long_buckets: Vec<u32>,
 }
 
 impl CardAbstraction {
@@ -56,11 +58,13 @@ impl CardAbstraction {
 
         if options.abs_type == "null" {
             let n_buckets = round_size;
-            let buckets = (0..n_buckets).map(|x| x as u16).collect();
+            let long_buckets = (0..n_buckets).map(|x| x as u32).collect();
             return Ok(CardAbstraction {
                 round_size,
                 n_buckets,
-                buckets,
+                long_buckets,
+                short_buckets: Vec::new(),
+                use_short: false,
             });
         }
 
@@ -70,11 +74,13 @@ impl CardAbstraction {
             options.abs_type, round, options.k, options.d
         );
         let mut file = OpenOptions::new().read(true).open(filename)?;
-        let buckets = file.read_vec_from_file::<u16>()?;
+        let short_buckets = file.read_vec_from_file::<u16>()?;
         let abs = CardAbstraction {
             round_size,
             n_buckets,
-            buckets,
+            use_short: true,
+            short_buckets,
+            long_buckets: Vec::new(),
         };
         Ok(abs)
     }
@@ -87,6 +93,13 @@ impl CardAbstraction {
     /// gets the number of cannonical hands in this round
     pub const fn round_size(&self) -> usize {
         self.round_size
+    }
+    #[inline(always)]
+    pub fn get(&self, index: usize) -> u32 {
+        if self.use_short {
+            return self.short_buckets[index].into();
+        }
+        self.long_buckets[index]
     }
 }
 
@@ -106,7 +119,7 @@ mod tests {
                 round: BettingRound::FLOP,
             };
             let card_abs = CardAbstraction::load(options).unwrap();
-            assert_eq!(card_abs.buckets[0], 412);
+            assert_eq!(card_abs.get(0), 412);
             assert_eq!(5000, card_abs.n_buckets());
             assert_eq!(1286792, card_abs.round_size());
         });
@@ -123,7 +136,7 @@ mod tests {
                 round: BettingRound::TURN,
             };
             let card_abs = CardAbstraction::load(options).unwrap();
-            assert_eq!(card_abs.buckets[0], 3200);
+            assert_eq!(card_abs.get(0), 3200);
             assert_eq!(5000, card_abs.n_buckets());
             assert_eq!(13960050, card_abs.round_size());
         });
@@ -140,7 +153,7 @@ mod tests {
                 round: BettingRound::RIVER,
             };
             let card_abs = CardAbstraction::load(options).unwrap();
-            assert_eq!(card_abs.buckets[0], 4233);
+            assert_eq!(card_abs.get(0), 4233);
             assert_eq!(5000, card_abs.n_buckets());
             assert_eq!(123156254, card_abs.round_size());
         });

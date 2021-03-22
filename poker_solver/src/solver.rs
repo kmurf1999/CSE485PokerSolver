@@ -1,15 +1,21 @@
-use crate::card::Card;
 use crate::card_abstraction::{CardAbstraction, CardAbstractionOptions};
-use crate::combos::CardComboIter;
 use crate::constants::*;
 use crate::game_node::GameNode;
 use crate::round::BettingRound;
-use crate::sparse_and_dense::SparseAndDense;
-use crate::tree::{Node, Tree};
+use crate::sparse_and_dense::{generate_buckets, SparseAndDense};
+use crate::tree::Tree;
 use crate::tree_builder::{TreeBuilder, TreeBuilderOptions};
+use rand::{
+    distributions::{Distribution, Uniform},
+    prelude::*,
+    rngs::{SmallRng, ThreadRng},
+    thread_rng, Rng,
+};
+use rust_poker::hand_evaluator::{evaluate, Hand, CARDS};
 use rust_poker::hand_range::{get_card_mask, HandRange};
 use rust_poker::HandIndexer;
 use std::convert::TryFrom;
+use std::iter::FromIterator;
 use std::result::Result;
 use thiserror::Error as ThisError;
 
@@ -35,13 +41,28 @@ pub enum SolverError {
     InvalidCardAbstraction,
 }
 
+#[derive(Debug)]
+pub struct Infoset {
+    regrets: Vec<i32>,
+    strategy_sum: Vec<u32>,
+}
+
+impl Infoset {
+    fn init(n_actions: usize) -> Self {
+        Infoset {
+            regrets: vec![0; n_actions],
+            strategy_sum: vec![0; n_actions],
+        }
+    }
+}
+
 /// options for running a postflop solver simulation
 #[derive(Debug)]
 pub struct SolverOptions {
     /// initial board mask
     pub board_mask: u64,
     /// hand range for each player
-    pub hand_ranges: Vec<HandRange>,
+    pub hand_ranges: Vec<String>,
     /// initial stack sizes
     pub stacks: Vec<u32>,
     /// initial pot size
@@ -52,6 +73,22 @@ pub struct SolverOptions {
     pub raise_sizes: Vec<Vec<Vec<f64>>>,
     /// an abstraction for every round
     pub card_abstraction: Vec<String>,
+}
+
+impl ToString for SolverOptions {
+    fn to_string(&self) -> String {
+        let s = format!(
+            "b{}-hr{:?}-st{:?}-p{}-bs{:?}-rs{:?}-ca{:?}",
+            self.board_mask,
+            self.hand_ranges,
+            self.stacks,
+            self.pot,
+            self.bet_sizes,
+            self.raise_sizes,
+            self.card_abstraction
+        );
+        s.split_whitespace().collect()
+    }
 }
 
 #[derive(Debug)]
@@ -66,70 +103,33 @@ pub struct Solver {
     card_abstraction: Vec<CardAbstraction>,
     /// buckets for each player for each round
     buckets: Vec<Vec<SparseAndDense>>,
-}
-
-fn generate_buckets(
-    hand_range: &HandRange,
-    card_abstraction: &CardAbstraction,
-    round: BettingRound,
-    board_mask: u64,
-) -> SparseAndDense {
-    let (indexer, total_board_cards) = match round {
-        BettingRound::PREFLOP => (HandIndexer::init(1, vec![2]), 0),
-        BettingRound::FLOP => (HandIndexer::init(2, vec![2, 3]), 3),
-        BettingRound::TURN => (HandIndexer::init(2, vec![2, 4]), 4),
-        BettingRound::RIVER => (HandIndexer::init(2, vec![2, 5]), 5),
-    };
-    let mut cards: [u8; 7] = [CARD_COUNT; 7];
-    let mut num_board_cards = 0;
-    // copy board cards
-    for i in 0..CARD_COUNT {
-        if ((1u64 << i) & board_mask) != 0 {
-            cards[num_board_cards + 2] = i;
-            num_board_cards += 1;
-        }
-    }
-    let mut sd = SparseAndDense::default();
-
-    let board_combos: Vec<Vec<Card>> = match total_board_cards - num_board_cards > 0 {
-        true => CardComboIter::new(board_mask, total_board_cards - num_board_cards).collect(),
-        false => Vec::new(),
-    };
-
-    for hole_cards in &hand_range.hands {
-        let hand_mask = (1u64 << hole_cards.0) | (1u64 << hole_cards.1);
-        if (hand_mask & board_mask) != 0 {
-            continue;
-        }
-        cards[0] = hole_cards.0;
-        cards[1] = hole_cards.1;
-        let combo_mask = hand_mask | board_mask;
-        // if no board combos we're probably dealing with a preflop combo
-        if board_combos.is_empty() {
-            let cannon_index = indexer.get_index(&cards[0..2]);
-            let bucket = card_abstraction.buckets[cannon_index as usize];
-            sd.sparse_to_dense(bucket.into());
-            continue;
-        }
-        for board_combo in &board_combos {
-            let board_combo_mask: u64 = board_combo.iter().map(|c| 1u64 << c).sum();
-            if (board_combo_mask & combo_mask) != 0 {
-                continue;
-            }
-            for i in 0..board_combo.len() {
-                cards[i + num_board_cards + 2] = board_combo[i];
-            }
-            let cannon_index = indexer.get_index(&cards[0..total_board_cards + 2]);
-            let bucket = card_abstraction.buckets[cannon_index as usize];
-            sd.sparse_to_dense(bucket.into());
-        }
-    }
-
-    sd
+    /// infoset for each action node index for each bucket
+    /// plans to break them up by player and round in the future
+    infosets: Vec<Vec<Infoset>>,
+    /// random number generator
+    rng: ThreadRng,
+    /// number of players
+    n_players: usize,
+    /// hand indexer for each round
+    hand_indexers: [HandIndexer; 4],
+    /// initial round
+    start_round: BettingRound,
+    /// number of betting rounds in this tree
+    num_rounds: usize,
+    /// sampled combo bucket for each player for each round
+    combo_buckets: Vec<Vec<usize>>,
+    /// score of each hand
+    hand_scores: Vec<u16>,
+    /// distribution for each hand range
+    /// used for sampling
+    combo_dists: Vec<Uniform<usize>>,
+    /// sampled combo index for this hand
+    combo_idxs: Vec<usize>,
 }
 
 impl Solver {
-    pub fn init(mut options: SolverOptions) -> Result<Solver, Error> {
+    /// initialize a heads up postflop solver using these options
+    pub fn init(options: SolverOptions) -> Result<Solver, Error> {
         // check if initial board is valid
         // must be between 3 and 5 cards
         let num_board_cards = options.board_mask.count_ones();
@@ -202,7 +202,12 @@ impl Solver {
             }
         }
         // remove conflicting combos
-        for hr in &mut options.hand_ranges {
+        let mut hand_ranges: Vec<HandRange> = options
+            .hand_ranges
+            .iter()
+            .map(|rs| HandRange::from_string(rs.to_string()))
+            .collect();
+        for hr in &mut hand_ranges {
             hr.remove_conflicting_combos(options.board_mask);
         }
         // load card abstraction
@@ -238,7 +243,7 @@ impl Solver {
             for round in 0..num_rounds {
                 let br = BettingRound::try_from(usize::from(start_round) + round)?;
                 let b = generate_buckets(
-                    &options.hand_ranges[player],
+                    &hand_ranges[player],
                     &card_abstraction[round],
                     br,
                     options.board_mask,
@@ -257,26 +262,134 @@ impl Solver {
         };
         let game_tree = TreeBuilder::build(&tree_options)?;
 
+        // initialize infosets
+        let mut infosets: Vec<Vec<Infoset>> = Vec::new();
+        for node in game_tree.iter() {
+            if let GameNode::Action {
+                actions,
+                index,
+                round,
+                player,
+            } = &node.data
+            {
+                let index = *index as usize;
+                if infosets.len() <= index {
+                    infosets.resize_with(index + 1, Default::default);
+                }
+                let n_buckets = buckets[usize::from(*player)][usize::from(*round)].len();
+                let n_actions = actions.len();
+
+                infosets[index] = (0..n_buckets).map(|_| Infoset::init(n_actions)).collect();
+            }
+        }
+        // create hand indexers
+        let hand_indexers = [
+            HandIndexer::init(1, vec![2]),
+            HandIndexer::init(2, vec![2, 3]),
+            HandIndexer::init(2, vec![2, 4]),
+            HandIndexer::init(2, vec![2, 5]),
+        ];
+        // create combo buckets
+        let combo_buckets = vec![vec![0; num_rounds]; n_players];
+        // create hand scores
+        let hand_scores = vec![0; n_players];
+        // create combo idxs
+        let combo_idxs = vec![0usize; n_players];
+        // create combo distributions for sampling
+        let combo_dists = hand_ranges
+            .iter()
+            .map(|hr| Uniform::from(0..hr.hands.len()))
+            .collect();
+
         let solver = Solver {
             game_tree,
             initial_board: options.board_mask,
             card_abstraction,
             buckets,
-            hand_ranges: options.hand_ranges,
+            hand_ranges,
+            infosets,
+            rng: thread_rng(),
+            n_players,
+            hand_indexers,
+            start_round,
+            num_rounds,
+            combo_buckets,
+            combo_dists,
+            combo_idxs,
+            hand_scores,
         };
         Ok(solver)
+    }
+    /// deal a hand and get player reach indexes, winning player, and buckets
+    pub fn deal(&mut self) {
+        // select a hole card pair
+        let mut used_card_mask = self.initial_board;
+        for (player, hr) in self.hand_ranges.iter().enumerate() {
+            loop {
+                let combo_idx = self.combo_dists[player].sample(&mut self.rng);
+                let combo_mask = (1u64 << hr.hands[combo_idx].0) | (1u64 << hr.hands[combo_idx].1);
+                if (combo_mask & used_card_mask) == 0 {
+                    self.combo_idxs[player] = combo_idx;
+                    used_card_mask |= combo_mask;
+                    break;
+                }
+            }
+        }
+        // copy board cards
+        let mut cards = [52u8; 7];
+        let mut i = 2;
+        for j in 0..CARD_COUNT {
+            if (self.initial_board & (1u64 << j)) != 0 {
+                cards[i] = j;
+                i += 1;
+            }
+        }
+        // generate remaining board cards
+        for j in i..7 {
+            loop {
+                let c = self.rng.gen_range(0, CARD_COUNT);
+                if ((1u64 << c) & used_card_mask) == 0 {
+                    cards[j] = c;
+                    used_card_mask |= 1u64 << c;
+                    break;
+                }
+            }
+        }
+        // score each hands
+        let mut board: Hand = Hand::default();
+        for c in &cards[2..7] {
+            board += CARDS[usize::from(*c)];
+        }
+        // generate combo buckes and score hands
+        for player in 0..self.n_players {
+            let hole_cards = &self.hand_ranges[player].hands[self.combo_idxs[player]];
+            cards[0] = hole_cards.0;
+            cards[1] = hole_cards.1;
+            let hand = board + CARDS[usize::from(cards[0])] + CARDS[usize::from(cards[1])];
+            self.hand_scores[player] = evaluate(&hand);
+            for round in 0..self.num_rounds {
+                let cannon_idx = self.hand_indexers[usize::from(self.start_round) + round]
+                    .get_index(&cards) as usize;
+                let bucket_idx = self.card_abstraction[round].get(cannon_idx) as usize;
+                let dense_idx = self.buckets[player][round]
+                    .sparse_to_dense(bucket_idx)
+                    .unwrap();
+                self.combo_buckets[player][round] = dense_idx;
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test::bench::Bencher;
 
     #[test]
-    fn test_init_valid() {
+    fn test_init_flop_valid() {
         let options = SolverOptions {
             board_mask: get_card_mask("AhAdAc"),
-            hand_ranges: HandRange::from_strings(vec!["random".to_string(), "random".to_string()]),
+            hand_ranges: vec!["random".to_string(), "random".to_string()],
             stacks: vec![10000, 10000],
             pot: 100,
             bet_sizes: vec![
@@ -291,5 +404,74 @@ mod tests {
         };
         let solver = Solver::init(options);
         assert_eq!(solver.is_ok(), true);
+    }
+
+    #[test]
+    fn test_init_turn_valid() {
+        let options = SolverOptions {
+            board_mask: get_card_mask("AhAdAcKc"),
+            hand_ranges: vec!["random".to_string(), "random".to_string()],
+            stacks: vec![10000, 10000],
+            pot: 100,
+            bet_sizes: vec![vec![vec![0.5], vec![0.5]], vec![vec![0.5], vec![0.5]]],
+            raise_sizes: vec![vec![vec![1.0], vec![1.0]], vec![vec![1.0], vec![1.0]]],
+            card_abstraction: vec!["null".to_string(), "ochs".to_string()],
+        };
+        let solver = Solver::init(options);
+        assert_eq!(solver.is_ok(), true);
+    }
+
+    #[test]
+    fn test_init_river_valid() {
+        let options = SolverOptions {
+            board_mask: get_card_mask("AhAdAcKc2d"),
+            hand_ranges: vec!["random".to_string(), "random".to_string()],
+            stacks: vec![10000, 10000],
+            pot: 100,
+            bet_sizes: vec![vec![vec![0.5]], vec![vec![0.5]]],
+            raise_sizes: vec![vec![vec![1.0]], vec![vec![1.0]]],
+            card_abstraction: vec!["null".to_string()],
+        };
+        let solver = Solver::init(options);
+        assert_eq!(solver.is_ok(), true);
+    }
+
+    #[bench]
+    // 1,062 ns/iter (+/- 62)
+    fn bench_deal(b: &mut Bencher) {
+        let options = SolverOptions {
+            board_mask: get_card_mask("AhAdAc"),
+            hand_ranges: vec!["random".to_string(), "random".to_string()],
+            stacks: vec![10000, 10000],
+            pot: 100,
+            bet_sizes: vec![
+                vec![vec![0.5], vec![0.5], vec![0.5]],
+                vec![vec![0.5], vec![0.5], vec![0.5]],
+            ],
+            raise_sizes: vec![
+                vec![vec![1.0], vec![1.0], vec![1.0]],
+                vec![vec![1.0], vec![1.0], vec![1.0]],
+            ],
+            card_abstraction: vec!["null".to_string(), "emd".to_string(), "ochs".to_string()],
+        };
+        let mut solver = Solver::init(options).unwrap();
+        b.iter(|| {
+            solver.deal();
+        });
+    }
+
+    #[test]
+    fn test_options_to_string() {
+        let options = SolverOptions {
+            board_mask: get_card_mask("AhAdAcKc"),
+            hand_ranges: vec!["random".to_string(), "random".to_string()],
+            stacks: vec![10000, 10000],
+            pot: 100,
+            bet_sizes: vec![vec![vec![0.5], vec![0.5]], vec![vec![0.5], vec![0.5]]],
+            raise_sizes: vec![vec![vec![1.0], vec![1.0]], vec![vec![1.0], vec![1.0]]],
+            card_abstraction: vec!["null".to_string(), "ochs".to_string()],
+        };
+        let as_string = "b4081387162304512-hr[\"random\",\"random\"]-st[10000,10000]-p100-bs[[[0.5],[0.5]],[[0.5],[0.5]]]-rs[[[1.0],[1.0]],[[1.0],[1.0]]]-ca[\"null\",\"ochs\"]";
+        assert_eq!(&options.to_string(), as_string);
     }
 }

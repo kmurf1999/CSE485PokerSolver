@@ -22,6 +22,7 @@ pub enum GameNode {
     PublicChance,
     /// a player action
     Action {
+        round: u8,
         /// action node index
         index: u32,
         /// what player is action

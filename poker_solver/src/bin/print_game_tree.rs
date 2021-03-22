@@ -28,6 +28,7 @@ fn print_node(tree: &Tree<GameNode>, node: usize, depth: usize) {
             actions,
             index: _,
             player: _,
+            round: _,
         } => {
             for (i, action) in actions.iter().enumerate() {
                 println!("{}{}", spaces, action);

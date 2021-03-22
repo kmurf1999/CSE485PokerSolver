@@ -10,6 +10,7 @@ use crate::round::BettingRound;
 /// We'll use this for now to define min-bets
 /// this will be changed in the future
 static BIG_BLIND: u32 = 10;
+static SMALL_BLIND: u32 = 5;
 
 /// Represents the state of a single player in a HUNL Texas Holdem Game
 #[derive(Debug, Copy, Clone)]

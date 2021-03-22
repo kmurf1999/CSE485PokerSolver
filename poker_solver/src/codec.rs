@@ -19,7 +19,7 @@ pub enum PokerEvent {
     PostBlinds {
         stacks: [u32; MAX_PLAYERS],
         wagers: [u32; MAX_PLAYERS],
-        blinds: [u32; MIN_PLAYERS],
+        blinds: [u32; 2],
         pot: u32,
     },
     /// Event sent to a single client when they need to make an action
