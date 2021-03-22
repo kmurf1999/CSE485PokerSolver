@@ -289,7 +289,7 @@ export default function App() {
   function handleClick(){
       console.log(bet)
           //client.send(JSON.stringify(JSON.parse( "{\"SendAction\": {\"action\": \"BET\"}}")))
-      client.send(JSON.stringify({ SendAction: { action: { BET: 40 }}}))
+      client.send(JSON.stringify({ SendAction: { action: { BET: parseInt(bet) }}}))
   }
 
 
