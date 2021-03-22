@@ -6,6 +6,7 @@ const BLOCK_SIZE: usize = 1000000;
 /// Converts a sparse array into a dense array
 /// used for mapping flop/turn/river subsets into arrays that save memory
 /// cards -> cannonical index -> bucket index -> dense index
+#[derive(Debug)]
 pub struct SparseAndDense {
     sparse_to_dense: HashMap<usize, usize>,
     dense_to_sparse: Vec<usize>,
