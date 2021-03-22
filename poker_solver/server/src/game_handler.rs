@@ -187,7 +187,7 @@ impl GameRunner {
 
         if let Some(player_fold) = hand_state.player_folded() {
             // player folded
-            stacks[usize::from(player_fold) ] += pot;
+            stacks[1- usize::from(player_fold) ] += pot;
         } else {
             // do showdown
             while hand_state.round() != BettingRound::RIVER {
@@ -278,9 +278,6 @@ impl GameRunner {
                         //if json!(PokerEvent::SendAction {action}) = json!("\"SendAction\":{\"action\":{\"BET\":1}}}");
                             if hand_state.is_action_valid(action) {
                                 return Ok(action);
-                            } else {
-                            println!("{:?}", hand_state.wagers());
-                            println!("{:?}", action);
                             }
                             // invalid action
                         }
