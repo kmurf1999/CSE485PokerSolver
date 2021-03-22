@@ -13,6 +13,7 @@ use tokio::time::{timeout, Duration};
 use tracing::{debug, info, instrument};
 use warp::filters::ws::Message;
 use warp::reject::Reject;
+use warp::header::value;
 
 #[derive(Debug, Error, Serialize, Deserialize)]
 enum GameError {
@@ -186,7 +187,7 @@ impl GameRunner {
 
         if let Some(player_fold) = hand_state.player_folded() {
             // player folded
-            stacks[usize::from(player_fold) - 1] += pot;
+            stacks[usize::from(player_fold) ] += pot;
         } else {
             // do showdown
             while hand_state.round() != BettingRound::RIVER {
@@ -272,9 +273,14 @@ impl GameRunner {
                         if event.from != Some(self.client_ids[player_idx].clone()) {
                             continue;
                         }
-                        if let PokerEvent::SendAction { action } = event.event {
+                        if let PokerEvent::SendAction {action} = event.event {
+                        println!("{}", json!(PokerEvent::SendAction {action}));
+                        //if json!(PokerEvent::SendAction {action}) = json!("\"SendAction\":{\"action\":{\"BET\":1}}}");
                             if hand_state.is_action_valid(action) {
                                 return Ok(action);
+                            } else {
+                            println!("{:?}", hand_state.wagers());
+                            println!("{:?}", action);
                             }
                             // invalid action
                         }

@@ -169,7 +169,7 @@ export default function App() {
   let [boardCards, setBoardCards] = useState([99, 99, 99, 99, 99]);
   let [ourCards, setOurCards] = useState([99, 99]);
   let [round, setRound ] = useState(null)
-    let [bet, setBet] = useState('')
+    let [bet, setBet] = useState(0)
 
   useEffect(() => {
     if (client === null) {
@@ -251,6 +251,7 @@ export default function App() {
       case 'PostBlinds': {
         const { blinds, pot, stacks, wagers } = message.event['PostBlinds'];
         setStacks(stacks);
+        console.log(wagers)
         setWagers(wagers);
         setPot(pot);
         break;
@@ -265,6 +266,7 @@ export default function App() {
         const { action, pot, stacks, wagers } = message.event['AlertAction'];
         setStacks(stacks);
         setWagers(wagers);
+        console.log(wagers)
         setPot(pot);
         break;
       }
@@ -279,33 +281,34 @@ export default function App() {
 
 
   //BET
-    //TODO: Fix server codec for BET and RAISE actions ?
+    function BET(amount) {
+
+      return "BET"
+    }
+
   function handleClick(){
       console.log(bet)
-      /*if (client !== null) {
-          client.send(JSON.stringify({SendAction: {action: 'BET ' , from: clientId}}))
-      }*/
+          //client.send(JSON.stringify(JSON.parse( "{\"SendAction\": {\"action\": \"BET\"}}")))
+      client.send(JSON.stringify({ SendAction: { action: { BET: 40 }}}))
   }
 
-    function Bet() {
-        return undefined;
-    }
+
 
     function Fold() {
         if (client !== null) {
-            client.send(JSON.stringify({SendAction: {action: 'FOLD', from: clientId}}))
+            client.send(JSON.stringify({SendAction: {action: 'FOLD' }}))
         }
     }
 
     function Check() {
         if (client !== null) {
-            client.send(JSON.stringify({SendAction: {action: 'CHECK' , from: clientId}}))
+            client.send(JSON.stringify({SendAction: {action: 'CHECK' }}))
         }
     }
 
     function Call() {
         if (client !== null) {
-            client.send(JSON.stringify({SendAction: {action: 'CALL', from: clientId}}))
+            client.send(JSON.stringify({SendAction: {action: 'CALL'}}))
         }
     }
 
@@ -353,10 +356,10 @@ export default function App() {
         </Box>
 
         <Box p = {1} display="flex" alignItems="center" justifyContent="center">
-          <Button onClick={Bet} variant = "outlined" color="primary">Min Bet</Button>
-          <Button onClick={Bet} variant = "outlined" color="primary">Bet Half Pot</Button>
-          <Button onClick={Bet} variant = "outlined" color="primary">Bet Pot</Button>
-          <Button onClick={Bet} variant = "outlined" color="primary">All In</Button>
+          <Button onClick={BET} variant = "outlined" color="primary">Min Bet</Button>
+          <Button onClick={BET} variant = "outlined" color="primary">Bet Half Pot</Button>
+          <Button onClick={BET} variant = "outlined" color="primary">Bet Pot</Button>
+          <Button onClick={BET} variant = "outlined" color="primary">All In</Button>
           <TextField onChange={HandleChange} id="Bet-Entry" label = "Bet Amount" variant = "outlined" />
         </Box>
 
