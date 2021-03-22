@@ -275,7 +275,6 @@ impl GameRunner {
                         }
                         if let PokerEvent::SendAction {action} = event.event {
                         println!("{}", json!(PokerEvent::SendAction {action}));
-                        //if json!(PokerEvent::SendAction {action}) = json!("\"SendAction\":{\"action\":{\"BET\":1}}}");
                             if hand_state.is_action_valid(action) {
                                 return Ok(action);
                             }
