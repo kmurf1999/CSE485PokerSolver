@@ -9,12 +9,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::cmp::Ordering;
 use thiserror::Error;
+use tokio::time::sleep;
 use tokio::time::{timeout, Duration};
 use tracing::{debug, info, instrument};
 use warp::filters::ws::Message;
-use warp::reject::Reject;
 use warp::header::value;
-use tokio::time::{sleep};
+use warp::reject::Reject;
 
 #[derive(Debug, Error, Serialize, Deserialize)]
 enum GameError {
@@ -191,7 +191,7 @@ impl GameRunner {
 
         if let Some(player_fold) = hand_state.player_folded() {
             // player folded
-            stacks[1- usize::from(player_fold) ] += pot;
+            stacks[1 - usize::from(player_fold)] += pot;
         } else {
             // do showdown
             while hand_state.round() != BettingRound::RIVER {
@@ -228,7 +228,8 @@ impl GameRunner {
             pot,
         })
         .await?;
-        sleep(Duration::from_millis(500)).await;
+        // wait for 5 seconds after hand ends
+        sleep(Duration::from_millis(5000)).await;
         Ok(())
     }
     /// send message to all connected clients

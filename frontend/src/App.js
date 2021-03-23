@@ -1,7 +1,11 @@
-import {Button, TextField, makeStyles, Box, StylesProvider, colors} from '@material-ui/core';
+import {Button, Paper, InputBase, Typography, TextField, makeStyles, Box, Divider, StylesProvider, colors, FormControl, ButtonGroup} from '@material-ui/core';
+import OutlinedInput from '@material-ui/core/OutlinedInput';
+import InputLabel from '@material-ui/core/InputLabel';
+import InputAdornment from '@material-ui/core/InputAdornment';
 import List from '@material-ui/core/List';
 import ListItem from '@material-ui/core/ListItem';
 import { Ellipse } from 'react-shapes';
+import Slider from '@material-ui/core/Slider';
 import './App.css';
 import { w3cwebsocket as W3CWebSocket } from "websocket";
 import React, { useEffect, useState } from 'react';
@@ -90,11 +94,15 @@ const useStyles = makeStyles((theme) => ({
     },
   },
   game: {
+    position: 'relative',
     width: '100%',
+    maxWidth: 1200,
+    margin: '0 auto',
     display: 'grid',
     gridGap: '1em',
-    gridTemplateCols: '80px 1fr',
-    gridTemplateAreas: ' "history table" "history actions" '
+    gridTemplateColumns: '1em 300px 1fr 1em',
+    gridTemplateAreas: ' ". history table ." ". history actions ." ',
+    paddingTop: '1em'
   },
   table: {
     gridArea: 'table',
@@ -107,11 +115,40 @@ const useStyles = makeStyles((theme) => ({
   actions: {
     gridArea: 'actions'
   },
+  actionTimer: {
+    maxWidth: 500,
+    margin: '0 auto'
+  },
+  actionInputs: {
+    display: 'flex',
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    maxWidth: 500,
+    margin: '0 auto'
+  },
+  betEntryPaper: {
+    padding: '2px 4px',
+    display: 'flex',
+    alignItems: 'center',
+    width: 200,
+  },
+  betEntryInput: {
+    flex: 1,
+    marginLeft: '4px'
+  },
+  betEntryDivider: {
+    height: 28,
+    margin: 4,
+  },
+  betEntryButton: {
+    
+  },
   history: {
     gridArea: 'history',
     height: '100%',
-    maxHeight: '500px',
-    overflow: 'auto'
+    maxHeight: '100vh',
+    overflow: 'auto',
+    padding: '8px'
   },
   player: {
     display: 'flex',
@@ -129,7 +166,7 @@ const useStyles = makeStyles((theme) => ({
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center',
-    gridRow: 2
+    gridRow: 2,
   },
   felt: {
     position: 'absolute',
@@ -192,7 +229,18 @@ export default function App() {
   let [heroCards, setHeroCards] = useState([99, 99]);
   let [villanCards, setVillanCards] = useState([99, 99]);
   let [pos, setPos] = useState(0);
-  let [bet, setBet] = useState(0);
+  let [amount, setAmount] = useState(0);
+
+  let [timer, setTimer] = useState(null);
+  let [timeLeft, setTimeLeft] = useState(30);
+
+  const timerTick = () => {
+    if (timeLeft === 0) {
+      setTimer(clearInterval(timer));
+    } else {
+      setTimeLeft(timeLeft => timeLeft - 1);
+    }
+  }
 
   useEffect(() => {
     if (client === null) {
@@ -207,24 +255,17 @@ export default function App() {
           setClientId(clientid)
       });
     } else {
-
         //CLIENT isn't null anymore
         client.onmessage = (message) => {
-            HandleMessage(JSON.parse(message.data));
-
+          HandleMessage(JSON.parse(message.data));
         }
         client.onopen = () => {
             console.log('connected');
-
         }
-
         client.onclose = () => {
             console.log('disconnected');
         }
-
-        }
-
-
+      }
   });
   function HandleMessage(message) {
       //TODO handling messages now works, we have to implement what to do in each event
@@ -285,10 +326,15 @@ export default function App() {
         setPot(newPot);
         break;
       }
-      case 'RequestAction':
+      case 'RequestAction': {
+        setTimer(setInterval(timerTick, 1000));
+        break;
+      }
       case 'SendAction':
         break;
       case 'AlertAction': {
+        setTimer(clearInterval(timer));
+        setTimeLeft(30);
         const { action, pot: newPot, stacks: newStacks, wagers: newWagers } = message.event['AlertAction'];
 
         const player = message.from === clientId ? 'Hero' : 'Villian';
@@ -304,15 +350,12 @@ export default function App() {
       default: break;
     }
   }
-  function HandleChange(e){
-      setBet(e.target.value);
-  }
-  function BET(amount) {
-    return "BET"
-  }
-  function handleClick(){
-    console.log(bet)
-    client.send(JSON.stringify({ SendAction: { action: { BET: parseInt(bet) }}}))
+  function BetOrRaise(){
+    if (raiseValid) {
+      client.send(JSON.stringify({ SendAction: { action: { RAISE: parseInt(amount) }}}));
+    } else {
+      client.send(JSON.stringify({ SendAction: { action: { BET: parseInt(amount) }}}));
+    }
   }
   function Fold() {
     if (client !== null) {
@@ -329,6 +372,14 @@ export default function App() {
         client.send(JSON.stringify({SendAction: {action: 'CALL'}}))
     }
   }
+
+  const raiseValid = wagers[1 - pos] > wagers[pos];
+  const betValid = wagers[1 - pos] === 0;
+  const checkValid = wagers[1 - pos] === 0;
+  const callValid = wagers[1 - pos] > wagers[pos];
+  const foldValid = wagers[1 - pos] > wagers[pos];
+
+  const BetOrRaiseText = raiseValid ? 'Raise' : 'Bet';
 
   return (
     <div className={classes.game}>
@@ -378,26 +429,44 @@ export default function App() {
 
 
     <div className={classes.actions}>
-      <Box p = {1} display="flex" alignItems="center" justifyContent="center">
-        <Button onClick={Fold} variant = "outlined" color="primary">Fold</Button>
-        <Button onClick={Check} variant = "outlined" color="primary">Check</Button>
-        <Button onClick={Call} variant = "outlined" color="primary">Call</Button>
-        <Button onClick={handleClick} variant = "outlined" color="primary">Bet</Button>
+      <Box className={classes.actionTimer}>
+        <Slider value={timeLeft * (100 / 30)} onChange={null}/>
       </Box>
 
-      <Box p = {1} display="flex" alignItems="center" justifyContent="center">
-        <TextField onChange={HandleChange} id="Bet-Entry" label = "Bet Amount" variant = "outlined" />
-      </Box>
+      <div className={classes.actionInputs}>
+        <Button disabled={!foldValid} variant="contained" onClick={Fold}>Fold</Button>
+        <Button disabled={!checkValid} variant="contained" onClick={Check}>Check</Button>
+        <Button disabled={!callValid} variant="contained" onClick={Call}>Call</Button>
+        <Paper component="form" className={classes.betEntryPaper}>
+          <InputBase
+            placeholder="Bet size"
+            inputProps={{ 'aria-label': 'bet size' }}
+            className={classes.betEntryInput}
+            type="num"
+            value={amount}
+            onChange={e => setAmount(e.target.value)}
+            startAdornment={<InputAdornment position="start">$</InputAdornment>}
+          />
+          <Divider className={classes.betEntryDivider} orientation="vertical" />
+          <Button className={classes.betEntryButton} variant="contained" disableElevation color="primary" disabled={!betValid && !raiseValid} onClick={BetOrRaise}>{BetOrRaiseText}</Button>
+        </Paper>
+      </div>
 
     </div>
 
-    <List className={classes.history}>
-        {gameHistory.map((action, index) => 
-          <ListItem key={index}>
-            {action}
-          </ListItem>
-        )}
-    </List>
+    <Paper className={classes.history}>
+      <Typography>
+        Game History
+      </Typography>
+      <List>
+          {gameHistory.map((action, index) => 
+            <ListItem key={index}>
+              {action}
+            </ListItem>
+          )}
+      </List>
+    </Paper>
+
 
 
     </div>
