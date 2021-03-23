@@ -1,4 +1,4 @@
-import { Button, TextField, makeStyles, Box, StylesProvider } from '@material-ui/core';
+import {Button, TextField, makeStyles, Box, StylesProvider, colors} from '@material-ui/core';
 import { Ellipse } from 'react-shapes';
 import './App.css';
 import { w3cwebsocket as W3CWebSocket } from "websocket";
@@ -89,6 +89,7 @@ const useStyles = makeStyles((theme) => ({
   },
   game: {
     padding: '1em',
+      width: '100%',
     display: 'grid',
     gridGap: '1em',
     gridTemplateCols: '80px 1fr',
@@ -96,7 +97,6 @@ const useStyles = makeStyles((theme) => ({
   },
   table: {
     gridArea: 'table',
-    width: '100%',
     height: 500,
     position: 'relative',
     display: 'grid',
@@ -153,10 +153,18 @@ const useStyles = makeStyles((theme) => ({
   },
   pot: {
 
+
   },
   wager: {
+      position: 'relative',
+      gridRow: 4
 
-  }
+  },
+    stack:{
+        position: 'relative',
+        gridRow: 5
+
+    }
 }));
 
 export default function App() {
@@ -168,8 +176,9 @@ export default function App() {
   let [pot, setPot] = useState(0);
   let [boardCards, setBoardCards] = useState([99, 99, 99, 99, 99]);
   let [ourCards, setOurCards] = useState([99, 99]);
-  let [round, setRound ] = useState(null)
-    let [bet, setBet] = useState(0)
+  let [round, setRound ] = useState(null);
+  let [pos_index, setPos] = useState();
+  let [bet, setBet] = useState(0);
 
   useEffect(() => {
     if (client === null) {
@@ -217,6 +226,13 @@ export default function App() {
       case 'GameEnd':
         break;
       case 'HandStart':
+          let { position } = message.event['HandStart'];
+          let pos_index;
+          if (pos_index = position.indexOf(clientId)){
+              setPos(pos_index)
+          } else {
+              setPos(pos_index)
+          }
         break;
       case 'HandEnd':
         break;
@@ -239,6 +255,7 @@ export default function App() {
             case 'RIVER':
                 setBoardCards(cards)
 
+                //Known issue: Cards disappear before players actions in RIVER round
                 cards[0] = 99
                 cards[1] = 99
                 cards[2] = 99
@@ -251,15 +268,14 @@ export default function App() {
       case 'PostBlinds': {
         const { blinds, pot, stacks, wagers } = message.event['PostBlinds'];
         setStacks(stacks);
-        console.log(wagers)
         setWagers(wagers);
         setPot(pot);
+
         break;
       }
         case 'RequestAction':
-            //CALL payload
-            //client.send(JSON.stringify({SendAction: {action: 'CALL' , from: clientId}}))
-            //TODO: Implement payloads for (CALL, CHECK, FOLD, RAISE) Buttons
+            //TODO: Implement payloads for (RAISE) Button
+            window.alert("Your turn")
       case 'SendAction':
         break;
       case 'AlertAction': {
@@ -337,9 +353,6 @@ export default function App() {
             </div>
         </div>
         <div className={classes.hero}>
-            <div className={classes.wager}>
-              
-            </div>
             <div className={classes.privateCards}>
               <Card index={ourCards[0]}/>
               <Card index={ourCards[1]}/>
@@ -353,6 +366,12 @@ export default function App() {
         <Button onClick={Fold} variant = "outlined" color="primary">Fold</Button>
         <Button onClick={Check} variant = "outlined" color="primary">Check</Button>
         <Button onClick={Call} variant = "outlined" color="primary">Call</Button>
+            <div className={classes.stack}>
+                Stack: {stacks[pos_index]}
+            </div>
+            <div className={classes.wager}>
+                Wager: {wagers[pos_index]}
+            </div>
         </Box>
 
         <Box p = {1} display="flex" alignItems="center" justifyContent="center">
