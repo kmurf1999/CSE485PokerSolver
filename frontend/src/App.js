@@ -1,4 +1,6 @@
 import {Button, TextField, makeStyles, Box, StylesProvider, colors} from '@material-ui/core';
+import List from '@material-ui/core/List';
+import ListItem from '@material-ui/core/ListItem';
 import { Ellipse } from 'react-shapes';
 import './App.css';
 import { w3cwebsocket as W3CWebSocket } from "websocket";
@@ -88,8 +90,7 @@ const useStyles = makeStyles((theme) => ({
     },
   },
   game: {
-    padding: '1em',
-      width: '100%',
+    width: '100%',
     display: 'grid',
     gridGap: '1em',
     gridTemplateCols: '80px 1fr',
@@ -101,6 +102,7 @@ const useStyles = makeStyles((theme) => ({
     position: 'relative',
     display: 'grid',
     gridTemplateRows: '2fr 3fr 2fr',
+    padding: '1em'
   },
   actions: {
     gridArea: 'actions'
@@ -108,21 +110,19 @@ const useStyles = makeStyles((theme) => ({
   history: {
     gridArea: 'history',
     height: '100%',
-    background: 'grey'
+    maxHeight: '500px',
+    overflow: 'auto'
   },
-  hero: {
-    position: 'relative',
+  player: {
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'flex-end',
-    gridRow: 3
+  },
+  hero: {
+    position: 'relative'
   },
   villan: {
-    alignItems: 'flex-start',
-    position: 'relative',
-    display: 'flex',
-    justifyContent: 'center',
-    gridRow: 1
+    position: 'relative'
   },
   board: {
     position: 'relative',
@@ -152,19 +152,32 @@ const useStyles = makeStyles((theme) => ({
     maxHeight: 100,
   },
   pot: {
-
-
+    background: 'white',
+    borderRadius: '10px',
+    padding: '2px 4px',
+    marginRight: '4px',
+    height: '25px',
+    lineHeight: '25px',
+    fontWeight: 'bold'
   },
   wager: {
-      position: 'relative',
-      gridRow: 4
-
+    background: 'white',
+    borderRadius: '10px',
+    padding: '2px 4px',
+    position: 'absolute',
+    left: '-100%',
+    height: '25px',
+    lineHeight: '25px'
   },
-    stack:{
-        position: 'relative',
-        gridRow: 5
-
-    }
+  stack:{
+    background: 'white',
+    borderRadius: '10px',
+    padding: '2px 4px',
+    marginTop: '4px',
+    marginBottom: '4px',
+    height: '25px',
+    lineHeight: '25px'
+  }
 }));
 
 export default function App() {
@@ -175,25 +188,22 @@ export default function App() {
   let [wagers, setWagers] = useState([0, 0]);
   let [pot, setPot] = useState(0);
   let [boardCards, setBoardCards] = useState([99, 99, 99, 99, 99]);
-  let [ourCards, setOurCards] = useState([99, 99]);
-  let [round, setRound ] = useState(null);
-  let [pos_index, setPos] = useState();
+  let [gameHistory, setGameHistory] = useState([]);
+  let [heroCards, setHeroCards] = useState([99, 99]);
+  let [villanCards, setVillanCards] = useState([99, 99]);
+  let [pos, setPos] = useState(0);
   let [bet, setBet] = useState(0);
 
   useEffect(() => {
     if (client === null) {
-      connect().then(({client, clientid}) => {
-
-
-        client.onopen = () => {
+      connect().then(({client: connectedClient, clientid}) => {
+        connectedClient.onopen = () => {
           console.log('connected');
-
         }
-        client.onclose = () => {
+        connectedClient.onclose = () => {
           console.log('disconnected');
         }
-
-          setClient(client)
+          setClient(connectedClient)
           setClientId(clientid)
       });
     } else {
@@ -215,134 +225,132 @@ export default function App() {
         }
 
 
-    });
+  });
   function HandleMessage(message) {
       //TODO handling messages now works, we have to implement what to do in each event
     const eventType = typeof message.event === "string" ? message.event : Object.keys(message.event)[0];
 
     switch (eventType) {
-      case 'GameStart':
+      case 'HandStart': {
+        const { position, stacks: newStacks } = message.event['HandStart'];
+        setPos(position.indexOf(clientId));
+        setStacks(newStacks);
+        setBoardCards([99, 99, 99, 99, 99]);
+        setHeroCards([99, 99]);
+        setVillanCards([99, 99]);
+        setWagers([0, 0]);
+
+        const actionString = 'Hand Starting';
+        setGameHistory([...gameHistory, actionString]);
         break;
-      case 'GameEnd':
+      }
+      case 'HandEnd': {
+        const { stacks: newStacks } = message.event['HandEnd'];
+        setStacks(newStacks);
+        setWagers([0, 0]);
+
+        const actionString = 'Hand Over';
+        setGameHistory([...gameHistory, actionString]);
         break;
-      case 'HandStart':
-          let { position } = message.event['HandStart'];
-          let pos_index;
-          if (pos_index = position.indexOf(clientId)){
-              setPos(pos_index)
-          } else {
-              setPos(pos_index)
-          }
-        break;
-      case 'HandEnd':
-        break;
+      }
       case 'DealCards': {
         const { round, cards } = message.event['DealCards'];
-          setRound(round)
         switch (round) {
             case 'PREFLOP':
-                setOurCards(cards)
+                setHeroCards(cards)
                 break;
             case 'FLOP':
-                cards[3] = 99
-                cards[4] = 99
-                setBoardCards(cards)
+                cards[3] = 99;
+                cards[4] = 99;
+                setWagers([0, 0]);
+                setBoardCards(cards);
                 break;
             case 'TURN':
-                cards[4] = 99
-                setBoardCards(cards)
+                cards[4] = 99;
+                setWagers([0, 0]);
+                setBoardCards(cards);
                 break;
             case 'RIVER':
-                setBoardCards(cards)
-
-                //Known issue: Cards disappear before players actions in RIVER round
-                cards[0] = 99
-                cards[1] = 99
-                cards[2] = 99
-                cards[3] = 99
-                cards[4] = 99
+                setWagers([0, 0]);
+                setBoardCards(cards);
                 break;
+            default: break;
         }
         break;
       }
       case 'PostBlinds': {
-        const { blinds, pot, stacks, wagers } = message.event['PostBlinds'];
-        setStacks(stacks);
-        setWagers(wagers);
-        setPot(pot);
-
+        const { pot: newPot, stacks: newStacks, wagers: newWagers } = message.event['PostBlinds'];
+        setStacks(newStacks);
+        setWagers(newWagers);
+        setPot(newPot);
         break;
       }
-        case 'RequestAction':
-            //TODO: Implement payloads for (RAISE) Button
-            window.alert("Your turn")
+      case 'RequestAction':
       case 'SendAction':
         break;
       case 'AlertAction': {
-        const { action, pot, stacks, wagers } = message.event['AlertAction'];
-        setStacks(stacks);
-        setWagers(wagers);
-        console.log(wagers)
-        setPot(pot);
+        const { action, pot: newPot, stacks: newStacks, wagers: newWagers } = message.event['AlertAction'];
+
+        const player = message.from === clientId ? 'Hero' : 'Villian';
+        const actionString = `${player} ${String(action)}`;
+
+        setGameHistory([...gameHistory, actionString]);
+        setStacks(newStacks);
+        setWagers(newWagers);
+        setPot(newPot);
         break;
       }
    
       default: break;
     }
   }
-
   function HandleChange(e){
       setBet(e.target.value);
   }
-
-
-  //BET
-    function BET(amount) {
-
-      return "BET"
-    }
-
+  function BET(amount) {
+    return "BET"
+  }
   function handleClick(){
-      console.log(bet)
-          //client.send(JSON.stringify(JSON.parse( "{\"SendAction\": {\"action\": \"BET\"}}")))
-      client.send(JSON.stringify({ SendAction: { action: { BET: parseInt(bet) }}}))
+    console.log(bet)
+    client.send(JSON.stringify({ SendAction: { action: { BET: parseInt(bet) }}}))
+  }
+  function Fold() {
+    if (client !== null) {
+        client.send(JSON.stringify({SendAction: {action: 'FOLD' }}))
+    }
+  }
+  function Check() {
+    if (client !== null) {
+        client.send(JSON.stringify({SendAction: {action: 'CHECK' }}))
+    }
+  }
+  function Call() {
+    if (client !== null) {
+        client.send(JSON.stringify({SendAction: {action: 'CALL'}}))
+    }
   }
 
-
-
-    function Fold() {
-        if (client !== null) {
-            client.send(JSON.stringify({SendAction: {action: 'FOLD' }}))
-        }
-    }
-
-    function Check() {
-        if (client !== null) {
-            client.send(JSON.stringify({SendAction: {action: 'CHECK' }}))
-        }
-    }
-
-    function Call() {
-        if (client !== null) {
-            client.send(JSON.stringify({SendAction: {action: 'CALL'}}))
-        }
-    }
-
-    return (
+  return (
     <div className={classes.game}>
       <div className={classes.table}>
         <div className={classes.felt}/>
-        <div className={classes.villan}>
-          <div className={classes.privateCards}>
-            <Card index={99}/>
-            <Card index={99}/>
-          </div>
-          <div className={classes.wager}>
+        <div className={classes.player} style={{gridRow: 1}}>
+          <div className={classes.villan}>
+            <div className={classes.stack}>
+              Villan: <strong>${stacks[1 - pos]}</strong>
+            </div>
+            <div className={classes.privateCards}>
+              <Card index={villanCards[0]}/>
+              <Card index={villanCards[1]}/>
+            </div>
+            <div className={classes.wager} style={{bottom: 0}}>
+              Bet: <strong>${wagers[1 - pos]}</strong>
+            </div>
           </div>
         </div>
         <div className={classes.board}>
             <div className={classes.pot}>
-              Pot: {pot}
+              ${pot}
             </div>
             <div className={classes.boardCards}>
               <Card index={boardCards[0]}/>
@@ -352,48 +360,46 @@ export default function App() {
               <Card index={boardCards[4]}/>
             </div>
         </div>
-        <div className={classes.hero}>
+        <div className={classes.player} style={{gridRow: 3}}>
+          <div className={classes.hero}>
             <div className={classes.privateCards}>
-              <Card index={ourCards[0]}/>
-              <Card index={ourCards[1]}/>
+              <Card index={heroCards[0]}/>
+              <Card index={heroCards[1]}/>
             </div>
+            <div className={classes.stack}>
+              Hero: <strong>${stacks[pos]}</strong>
+            </div>
+            <div className={classes.wager} style={{top: 0}}>
+              Bet: <strong>${wagers[pos]}</strong>
+            </div>
+          </div>
         </div>
       </div>
 
 
-      <div className={classes.actions}>
-        <Box p = {1} display="flex" alignItems="center" justifyContent="center">
+    <div className={classes.actions}>
+      <Box p = {1} display="flex" alignItems="center" justifyContent="center">
         <Button onClick={Fold} variant = "outlined" color="primary">Fold</Button>
         <Button onClick={Check} variant = "outlined" color="primary">Check</Button>
         <Button onClick={Call} variant = "outlined" color="primary">Call</Button>
-            <div className={classes.stack}>
-                Stack: {stacks[pos_index]}
-            </div>
-            <div className={classes.wager}>
-                Wager: {wagers[pos_index]}
-            </div>
-        </Box>
+        <Button onClick={handleClick} variant = "outlined" color="primary">Bet</Button>
+      </Box>
 
-        <Box p = {1} display="flex" alignItems="center" justifyContent="center">
-          <Button onClick={BET} variant = "outlined" color="primary">Min Bet</Button>
-          <Button onClick={BET} variant = "outlined" color="primary">Bet Half Pot</Button>
-          <Button onClick={BET} variant = "outlined" color="primary">Bet Pot</Button>
-          <Button onClick={BET} variant = "outlined" color="primary">All In</Button>
-          <TextField onChange={HandleChange} id="Bet-Entry" label = "Bet Amount" variant = "outlined" />
-        </Box>
+      <Box p = {1} display="flex" alignItems="center" justifyContent="center">
+        <TextField onChange={HandleChange} id="Bet-Entry" label = "Bet Amount" variant = "outlined" />
+      </Box>
 
-        <Box p = {1} display = "flex" alignItems="center" justifyContent="center">
-            <Button onClick={handleClick} variant = "outlined" color="primary">Bet</Button>
-        </Box>
+    </div>
+
+    <List className={classes.history}>
+        {gameHistory.map((action, index) => 
+          <ListItem key={index}>
+            {action}
+          </ListItem>
+        )}
+    </List>
 
 
-      </div>
-
-      <div className={classes.history}>
-
-      </div>
-
-
-      </div>
+    </div>
   );
 }

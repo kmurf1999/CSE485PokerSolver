@@ -14,6 +14,7 @@ use tracing::{debug, info, instrument};
 use warp::filters::ws::Message;
 use warp::reject::Reject;
 use warp::header::value;
+use tokio::time::{sleep};
 
 #[derive(Debug, Error, Serialize, Deserialize)]
 enum GameError {
@@ -147,8 +148,10 @@ impl GameRunner {
             pot: hand_state.pot(),
         })
         .await?;
+        sleep(Duration::from_millis(500)).await;
         // deal cards
         self.deal_cards(&mut hand_state).await?;
+        sleep(Duration::from_millis(500)).await;
         // loop until hand is finished
         while !hand_state.is_game_over() {
             // get action from player
@@ -171,6 +174,7 @@ impl GameRunner {
                 stacks: hand_state.stacks(),
             })
             .await?;
+            sleep(Duration::from_millis(500)).await;
             // check if round is over
             if hand_state.bets_settled() && !hand_state.is_game_over() {
                 // continue to next round
@@ -224,6 +228,7 @@ impl GameRunner {
             pot,
         })
         .await?;
+        sleep(Duration::from_millis(500)).await;
         Ok(())
     }
     /// send message to all connected clients

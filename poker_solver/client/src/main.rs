@@ -9,7 +9,7 @@ use websocket::client::ClientBuilder;
 use websocket::sync::Client;
 use websocket::{Message, OwnedMessage};
 
-const BASE_URI: &str = "http://localhost:3001";
+const BASE_URI: &str = "http://127.0.0.1:3001";
 
 async fn client_loop(client: Client<std::net::TcpStream>) {
     let mut rng = thread_rng();
