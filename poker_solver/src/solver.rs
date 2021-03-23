@@ -6,7 +6,7 @@ use crate::sparse_and_dense::{generate_buckets, SparseAndDense};
 use crate::tree::Tree;
 use crate::tree_builder::{TreeBuilder, TreeBuilderOptions};
 use rand::{
-    distributions::{Distribution, Uniform},
+    distributions::{Distribution, Uniform, WeightedIndex},
     prelude::*,
     rngs::{SmallRng, ThreadRng},
     thread_rng, Rng,
@@ -43,16 +43,68 @@ pub enum SolverError {
 
 #[derive(Debug)]
 pub struct Infoset {
-    regrets: Vec<i32>,
-    strategy_sum: Vec<u32>,
+    pub regrets: Vec<i32>,
+    pub strategy_sum: Vec<i32>,
 }
 
 impl Infoset {
-    fn init(n_actions: usize) -> Self {
+    pub fn init(n_actions: usize) -> Self {
         Infoset {
             regrets: vec![0; n_actions],
             strategy_sum: vec![0; n_actions],
         }
+    }
+    // get current strategy through regret-matching
+    pub fn sample_action<R: Rng>(&self, rng: &mut R) -> usize {
+        let n_actions = self.regrets.len();
+        let mut cdf = vec![0f64; n_actions];
+        cdf[0] = if self.regrets[0] > 0 {
+            self.regrets[0] as f64
+        } else {
+            0.0
+        };
+        let mut cum_sum = cdf[0];
+        for a in 1..n_actions {
+            cdf[a] = if self.regrets[a] > 0 {
+                self.regrets[a] as f64
+            } else {
+                0.0
+            };
+            cum_sum += cdf[a];
+            cdf[a] += cdf[a - 1];
+        }
+        if cum_sum == 0.0 {
+            return rng.gen_range(0, n_actions);
+        }
+        let rand = rng.gen_range(0f64, cum_sum);
+        for a in 0..n_actions {
+            if rand < cdf[a] {
+                return a;
+            }
+        }
+        n_actions - 1
+    }
+    // get current strategy through regret-matching
+    pub fn current_strategy(&self) -> Vec<f64> {
+        let n_actions = self.regrets.len();
+        let mut strategy = vec![0f64; n_actions];
+        let mut norm_sum = 0f64;
+        for a in 0..n_actions {
+            strategy[a] = if self.regrets[a] > 0 {
+                self.regrets[a] as f64
+            } else {
+                0.0
+            };
+            norm_sum += strategy[a];
+        }
+        for a in 0..n_actions {
+            if norm_sum > 0.0 {
+                strategy[a] /= norm_sum;
+            } else {
+                strategy[a] = 1.0 / n_actions as f64;
+            }
+        }
+        strategy
     }
 }
 
@@ -87,7 +139,7 @@ impl ToString for SolverOptions {
             self.raise_sizes,
             self.card_abstraction
         );
-        s.split_whitespace().collect()
+        s.replace(&[' ', '\"'][..], "")
     }
 }
 
@@ -378,6 +430,34 @@ impl Solver {
             }
         }
     }
+    fn update_strategy(&mut self) {
+        for node in self.game_tree.iter() {
+            if let GameNode::Action {
+                index,
+                player: _,
+                actions: _,
+                round: _,
+            } = &node.data
+            {
+                for infoset in &mut self.infosets[*index as usize] {
+                    let a = infoset.sample_action(&mut self.rng);
+                    infoset.strategy_sum[a] += 1;
+                    // let dist = WeightedIndex::new(&strategy).unwrap();
+                    // let choice = dist.sample(&mut self.rng);
+                    // infoset.strategy_sum[choice] += 1;
+                }
+            }
+        }
+    }
+    pub fn run(&mut self, max_iterations: usize) {
+        const STRATEGY_INTERVAL: usize = 10000;
+        for t in 1..max_iterations {
+            if (t % STRATEGY_INTERVAL) == 0 {
+                self.update_strategy();
+            }
+            for p in 0..self.n_players {}
+        }
+    }
 }
 
 #[cfg(test)]
@@ -460,6 +540,30 @@ mod tests {
         });
     }
 
+    #[bench]
+    // 13,542,834 ns/iter (+/- 2,424,643)
+    fn bench_update_strategy(b: &mut Bencher) {
+        let options = SolverOptions {
+            board_mask: get_card_mask("AhAdAc"),
+            hand_ranges: vec!["random".to_string(), "random".to_string()],
+            stacks: vec![10000, 10000],
+            pot: 100,
+            bet_sizes: vec![
+                vec![vec![0.5], vec![0.5], vec![0.5]],
+                vec![vec![0.5], vec![0.5], vec![0.5]],
+            ],
+            raise_sizes: vec![
+                vec![vec![1.0], vec![1.0], vec![1.0]],
+                vec![vec![1.0], vec![1.0], vec![1.0]],
+            ],
+            card_abstraction: vec!["null".to_string(), "emd".to_string(), "ochs".to_string()],
+        };
+        let mut solver = Solver::init(options).unwrap();
+        b.iter(|| {
+            solver.update_strategy();
+        });
+    }
+
     #[test]
     fn test_options_to_string() {
         let options = SolverOptions {
@@ -471,7 +575,7 @@ mod tests {
             raise_sizes: vec![vec![vec![1.0], vec![1.0]], vec![vec![1.0], vec![1.0]]],
             card_abstraction: vec!["null".to_string(), "ochs".to_string()],
         };
-        let as_string = "b4081387162304512-hr[\"random\",\"random\"]-st[10000,10000]-p100-bs[[[0.5],[0.5]],[[0.5],[0.5]]]-rs[[[1.0],[1.0]],[[1.0],[1.0]]]-ca[\"null\",\"ochs\"]";
+        let as_string = "b4081387162304512-hr[random,random]-st[10000,10000]-p100-bs[[[0.5],[0.5]],[[0.5],[0.5]]]-rs[[[1.0],[1.0]],[[1.0],[1.0]]]-ca[null,ochs]";
         assert_eq!(&options.to_string(), as_string);
     }
 }

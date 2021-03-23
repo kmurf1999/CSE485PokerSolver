@@ -95,6 +95,7 @@ impl CardAbstraction {
         self.round_size
     }
     #[inline(always)]
+    /// get the bucket at this index
     pub fn get(&self, index: usize) -> u32 {
         if self.use_short {
             return self.short_buckets[index].into();
