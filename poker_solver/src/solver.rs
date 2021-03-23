@@ -1,6 +1,6 @@
 use crate::card_abstraction::{CardAbstraction, CardAbstractionOptions};
 use crate::constants::*;
-use crate::game_node::GameNode;
+use crate::game_node::{GameNode, TerminalType};
 use crate::round::BettingRound;
 use crate::sparse_and_dense::{generate_buckets, SparseAndDense};
 use crate::tree::Tree;
@@ -13,13 +13,23 @@ use rand::{
 };
 use rust_poker::hand_evaluator::{evaluate, Hand, CARDS};
 use rust_poker::hand_range::{get_card_mask, HandRange};
+use rust_poker::read_write::VecIO;
 use rust_poker::HandIndexer;
+use std::cmp::Ordering;
 use std::convert::TryFrom;
+use std::fs::{File, OpenOptions};
+use std::io;
+use std::io::prelude::*;
+use std::io::SeekFrom;
 use std::iter::FromIterator;
+use std::mem::{forget, size_of, transmute};
 use std::result::Result;
+use std::slice;
 use thiserror::Error as ThisError;
 
 type Error = Box<dyn std::error::Error>;
+const PRUNE_THRESHOLD: i32 = -300_000_000;
+const STRATEGY_INTERVAL: usize = 10000;
 
 #[derive(Debug, ThisError)]
 pub enum SolverError {
@@ -47,46 +57,72 @@ pub struct Infoset {
     pub strategy_sum: Vec<i32>,
 }
 
-impl Infoset {
-    pub fn init(n_actions: usize) -> Self {
-        Infoset {
-            regrets: vec![0; n_actions],
-            strategy_sum: vec![0; n_actions],
-        }
-    }
-    // get current strategy through regret-matching
-    pub fn sample_action<R: Rng>(&self, rng: &mut R) -> usize {
-        let n_actions = self.regrets.len();
-        let mut cdf = vec![0f64; n_actions];
-        cdf[0] = if self.regrets[0] > 0 {
-            self.regrets[0] as f64
-        } else {
-            0.0
-        };
-        let mut cum_sum = cdf[0];
-        for a in 1..n_actions {
-            cdf[a] = if self.regrets[a] > 0 {
-                self.regrets[a] as f64
-            } else {
-                0.0
-            };
-            cum_sum += cdf[a];
-            cdf[a] += cdf[a - 1];
-        }
-        if cum_sum == 0.0 {
-            return rng.gen_range(0, n_actions);
-        }
-        let rand = rng.gen_range(0f64, cum_sum);
-        for a in 0..n_actions {
-            if rand < cdf[a] {
-                return a;
+/// Reads a Vector of type T from file
+/// todo fix this function
+fn read_vec_from_file<T>(file: &mut File, size: usize) -> Result<Vec<T>, Error> {
+    let mut buffer: Vec<T> = Vec::new();
+    unsafe {
+        let mut converted = Vec::<u8>::from_raw_parts(
+            buffer.as_mut_ptr() as *mut u8,
+            size * size_of::<T>(),
+            size * size_of::<T>(),
+        );
+        match file.read_to_end(&mut converted) {
+            Ok(s) => {
+                if converted.len() % size_of::<T>() != 0 {
+                    converted.truncate(size * size_of::<T>());
+                    forget(converted);
+                    // todo
+                    return Err(SolverError::TooManyPlayers.into());
+                }
+            }
+            Err(e) => {
+                converted.truncate(size * size_of::<T>());
+                forget(converted);
+                return Err(e.into());
             }
         }
-        n_actions - 1
+        let new_length = converted.len() / size_of::<T>();
+        let new_capacity = converted.len() / size_of::<T>();
+        buffer = Vec::from_raw_parts(converted.as_mut_ptr() as *mut T, new_length, new_capacity);
+        forget(converted);
+        Ok(buffer)
+    }
+}
+
+#[inline(always)]
+fn sample_pdf<R: Rng>(pdf: &Vec<f64>, rng: &mut R) -> usize {
+    let rand = rng.gen_range(0.0, 1.0);
+    let mut s = 0.0;
+    for i in 0..pdf.len() {
+        s += pdf[i];
+        if rand < s {
+            return i;
+        }
+    }
+    pdf.len() - 1
+}
+
+impl Default for Infoset {
+    fn default() -> Infoset {
+        Infoset {
+            regrets: Vec::new(),
+            strategy_sum: Vec::new(),
+        }
+    }
+}
+
+impl Infoset {
+    pub fn init(n_actions: usize, n_buckets: usize) -> Self {
+        Infoset {
+            regrets: vec![0; n_actions * n_buckets],
+            strategy_sum: vec![0; n_actions * n_buckets],
+        }
     }
     // get current strategy through regret-matching
-    pub fn current_strategy(&self) -> Vec<f64> {
-        let n_actions = self.regrets.len();
+    pub fn current_strategy(&self, bucket: usize, n_actions: usize) -> Vec<f64> {
+        let offset = bucket * n_actions;
+        let regrets = &self.regrets[offset..offset + n_actions];
         let mut strategy = vec![0f64; n_actions];
         let mut norm_sum = 0f64;
         for a in 0..n_actions {
@@ -145,6 +181,7 @@ impl ToString for SolverOptions {
 
 #[derive(Debug)]
 pub struct Solver {
+    options_string: String,
     /// game tree including all chance, private, and action nodes
     game_tree: Tree<GameNode>,
     /// initial board as 64 bit mask
@@ -157,7 +194,7 @@ pub struct Solver {
     buckets: Vec<Vec<SparseAndDense>>,
     /// infoset for each action node index for each bucket
     /// plans to break them up by player and round in the future
-    infosets: Vec<Vec<Infoset>>,
+    infosets: Vec<Infoset>,
     /// random number generator
     rng: ThreadRng,
     /// number of players
@@ -172,6 +209,8 @@ pub struct Solver {
     combo_buckets: Vec<Vec<usize>>,
     /// score of each hand
     hand_scores: Vec<u16>,
+    winner_mask: u8,
+    winner_count: u8,
     /// distribution for each hand range
     /// used for sampling
     combo_dists: Vec<Uniform<usize>>,
@@ -182,6 +221,8 @@ pub struct Solver {
 impl Solver {
     /// initialize a heads up postflop solver using these options
     pub fn init(options: SolverOptions) -> Result<Solver, Error> {
+        // used for filenames
+        let options_string = options.to_string();
         // check if initial board is valid
         // must be between 3 and 5 cards
         let num_board_cards = options.board_mask.count_ones();
@@ -315,7 +356,7 @@ impl Solver {
         let game_tree = TreeBuilder::build(&tree_options)?;
 
         // initialize infosets
-        let mut infosets: Vec<Vec<Infoset>> = Vec::new();
+        let mut infosets: Vec<Infoset> = Vec::new();
         for node in game_tree.iter() {
             if let GameNode::Action {
                 actions,
@@ -331,7 +372,7 @@ impl Solver {
                 let n_buckets = buckets[usize::from(*player)][usize::from(*round)].len();
                 let n_actions = actions.len();
 
-                infosets[index] = (0..n_buckets).map(|_| Infoset::init(n_actions)).collect();
+                infosets[index] = Infoset::init(n_actions, n_buckets);
             }
         }
         // create hand indexers
@@ -354,6 +395,7 @@ impl Solver {
             .collect();
 
         let solver = Solver {
+            options_string,
             game_tree,
             initial_board: options.board_mask,
             card_abstraction,
@@ -369,6 +411,8 @@ impl Solver {
             combo_dists,
             combo_idxs,
             hand_scores,
+            winner_count: 0,
+            winner_mask: 0,
         };
         Ok(solver)
     }
@@ -429,34 +473,172 @@ impl Solver {
                 self.combo_buckets[player][round] = dense_idx;
             }
         }
-    }
-    fn update_strategy(&mut self) {
-        for node in self.game_tree.iter() {
-            if let GameNode::Action {
-                index,
-                player: _,
-                actions: _,
-                round: _,
-            } = &node.data
-            {
-                for infoset in &mut self.infosets[*index as usize] {
-                    let a = infoset.sample_action(&mut self.rng);
-                    infoset.strategy_sum[a] += 1;
-                    // let dist = WeightedIndex::new(&strategy).unwrap();
-                    // let choice = dist.sample(&mut self.rng);
-                    // infoset.strategy_sum[choice] += 1;
+        self.winner_mask = 0u8;
+        self.winner_count = 0u8;
+        let mut high_score = 0u16;
+        for i in 0..self.n_players {
+            match self.hand_scores[i].cmp(&high_score) {
+                Ordering::Greater => {
+                    self.winner_mask = 1u8 << i;
+                    self.winner_count = 1;
+                    high_score = self.hand_scores[i];
                 }
+                Ordering::Equal => {
+                    self.winner_mask |= 1u8 << i;
+                    self.winner_count += 1;
+                }
+                _ => {}
             }
         }
     }
+    fn update_strategy(&mut self) {
+        // for node in self.game_tree.iter() {
+        //     if let GameNode::Action {
+        //         index,
+        //         player: _,
+        //         actions: _,
+        //         round: _,
+        //     } = &node.data
+        //     {
+        //         for infoset in &mut self.infosets[*index as usize] {
+        //             let s = infoset.current_strategy();
+        //             let a = sample_pdf(&s, &mut self.rng);
+        //             infoset.strategy_sum[a] += 1;
+        //         }
+        //     }
+        // }
+    }
+    fn traverse(&self, node_idx: usize, cfr_reach: f64, player: u8, prune: bool) -> f64 {
+        let node = self.game_tree.get_node(node_idx);
+        match &node.data {
+            GameNode::Terminal {
+                value,
+                ttype,
+                last_to_act,
+            } => {
+                if let TerminalType::Fold = ttype {
+                    if *last_to_act == player {
+                        -1.0 * (*value as f64)
+                    } else {
+                        *value as f64
+                    }
+                } else {
+                    if ((1u8 << player) & self.winner_mask) != 0 {
+                        return (*value as f64) / (self.winner_count as f64);
+                    }
+                    -1.0 * (*value as f64 / (self.winner_count as f64))
+                }
+            }
+            GameNode::Action {
+                round,
+                index,
+                player: node_player,
+                actions,
+            } => {
+                // if we are the player acting
+                let n_actions = actions.len();
+                let bucket = self.combo_buckets[usize::from(*node_player)][usize::from(*round)];
+                let offset = n_actions * bucket;
+                let strategy = self.infosets[*index as usize].current_strategy(bucket, n_actions);
+                if *node_player == player {
+                    let mut node_util = 0f64;
+                    let mut action_utils = vec![0f64; n_actions];
+                    let mut explored = vec![false; n_actions];
+                    if prune {
+                        let regrets =
+                            &self.infosets[*index as usize].regrets[offset..offset + n_actions];
+                        for a in 0..n_actions {
+                            let child_is_terminal = matches!(
+                                &self.game_tree.get_node(node.children[a]).data,
+                                GameNode::Terminal {
+                                    last_to_act: _,
+                                    value: _,
+                                    ttype: _
+                                }
+                            );
+                            if child_is_terminal || regrets[a] > PRUNE_THRESHOLD {
+                                explored[a] = true;
+                                action_utils[a] =
+                                    self.traverse(node.children[a], cfr_reach, player, prune);
+                                node_util += action_utils[a] * strategy[a];
+                            }
+                        }
+                    } else {
+                        for a in 0..n_actions {
+                            action_utils[a] =
+                                self.traverse(node.children[a], cfr_reach, player, prune);
+                            node_util += action_utils[a] * strategy[a];
+                        }
+                    }
+                    unsafe {
+                        let mut regrets =
+                            (&self.infosets[*index as usize].regrets[offset..offset + n_actions]
+                                as *const [i32]) as *mut [i32];
+                        for a in 0..n_actions {
+                            if !prune || explored[a] {
+                                (&mut *regrets)[a] += (action_utils[a] - node_util) as i32;
+                            }
+                        }
+                    }
+                    return node_util;
+                }
+                let mut rng = SmallRng::from_entropy();
+                let sampled_action = sample_pdf(&strategy, &mut rng);
+                self.traverse(
+                    node.children[sampled_action],
+                    cfr_reach * strategy[sampled_action],
+                    player,
+                    prune,
+                )
+            }
+            _ => self.traverse(node.children[0], cfr_reach, player, prune),
+        }
+    }
     pub fn run(&mut self, max_iterations: usize) {
-        const STRATEGY_INTERVAL: usize = 10000;
+        let mut evs = vec![0.0; self.n_players];
         for t in 1..max_iterations {
             if (t % STRATEGY_INTERVAL) == 0 {
                 self.update_strategy();
             }
-            for p in 0..self.n_players {}
+            for p in 0..self.n_players {
+                self.deal();
+                // TODO start cfr reach with product of actual combo weights
+                let prune = self.rng.gen_range(0.0, 1.0) < 0.05;
+                evs[p] += self.traverse(0, 1.0, p as u8, prune);
+            }
         }
+        println!("{:?}", evs);
+    }
+    /// save regrets to a file
+    fn save_regrets(&self) -> Result<(), Error> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(format!("data/regrets-{}.dat", self.options_string))?;
+        for action_index in 0..self.infosets.len() {
+            file.write_slice_to_file(&self.infosets[action_index].regrets[..])?;
+        }
+        Ok(())
+    }
+    /// load regrets from a file
+    fn load_regrets(&mut self) -> Result<(), Error> {
+        let mut file = OpenOptions::new()
+            .read(true)
+            .open(format!("data/regrets-{}.dat", self.options_string))?;
+        let mut offset = 0u64;
+        for action_index in 0..self.infosets.len() {
+            file.seek(SeekFrom::Start(offset))?;
+            let size = self.infosets[action_index].regrets.len();
+            let mut buffer = vec![0; size * size_of::<i32>()];
+            file.read(&mut buffer)?;
+            unsafe {
+                self.infosets[action_index].regrets =
+                    Vec::from_raw_parts(buffer.as_mut_ptr() as *mut i32, size, size);
+                forget(buffer);
+            }
+            offset += (self.infosets[action_index].regrets.len() * size_of::<i32>()) as u64;
+        }
+        Ok(())
     }
 }
 
@@ -541,7 +723,119 @@ mod tests {
     }
 
     #[bench]
-    // 13,542,834 ns/iter (+/- 2,424,643)
+    // 18,400 ns/iter (+/- 7,624)
+    fn bench_traverse_prune(b: &mut Bencher) {
+        let options = SolverOptions {
+            board_mask: get_card_mask("AhAdAc"),
+            hand_ranges: vec!["random".to_string(), "random".to_string()],
+            stacks: vec![10000, 10000],
+            pot: 100,
+            bet_sizes: vec![
+                vec![vec![0.5], vec![0.5], vec![0.5]],
+                vec![vec![0.5], vec![0.5], vec![0.5]],
+            ],
+            raise_sizes: vec![
+                vec![vec![1.0], vec![1.0], vec![1.0]],
+                vec![vec![1.0], vec![1.0], vec![1.0]],
+            ],
+            card_abstraction: vec!["null".to_string(), "emd".to_string(), "ochs".to_string()],
+        };
+        let mut solver = Solver::init(options).unwrap();
+        solver.deal();
+        b.iter(|| {
+            solver.traverse(0, 1.0, 0, true);
+        });
+    }
+
+    #[bench]
+    // 38,969,912 ns/iter (+/- 14,411,448)
+    fn bench_train_1000(b: &mut Bencher) {
+        let options = SolverOptions {
+            board_mask: get_card_mask("AhAdAc"),
+            hand_ranges: vec!["random".to_string(), "random".to_string()],
+            stacks: vec![10000, 10000],
+            pot: 100,
+            bet_sizes: vec![
+                vec![vec![0.5], vec![0.5], vec![0.5]],
+                vec![vec![0.5], vec![0.5], vec![0.5]],
+            ],
+            raise_sizes: vec![
+                vec![vec![1.0], vec![1.0], vec![1.0]],
+                vec![vec![1.0], vec![1.0], vec![1.0]],
+            ],
+            card_abstraction: vec!["null".to_string(), "emd".to_string(), "ochs".to_string()],
+        };
+        let mut solver = Solver::init(options).unwrap();
+        b.iter(|| {
+            solver.run(1000);
+        });
+    }
+
+    #[test]
+    fn test_train_100000() {
+        let options = SolverOptions {
+            board_mask: get_card_mask("QhJdTs"),
+            hand_ranges: vec![
+                "22+,AT+,KT+,QT+,JTs,A5s".to_string(),
+                "22+,A9+,KT+,QT+,JT+,T9s,98s,87s,".to_string(),
+            ],
+            stacks: vec![10000, 10000],
+            pot: 100,
+            bet_sizes: vec![
+                vec![vec![0.5], vec![0.5], vec![0.5]],
+                vec![vec![0.5], vec![0.5], vec![0.5]],
+            ],
+            raise_sizes: vec![
+                vec![vec![1.0], vec![1.0], vec![1.0]],
+                vec![vec![1.0], vec![1.0], vec![1.0]],
+            ],
+            card_abstraction: vec!["null".to_string(), "emd".to_string(), "ochs".to_string()],
+        };
+        let mut solver = Solver::init(options).unwrap();
+        solver.run(100000);
+    }
+
+    #[test]
+    fn test_save_load() {
+        let options = SolverOptions {
+            board_mask: get_card_mask("QhJdTs"),
+            hand_ranges: vec![
+                "22+,AT+,KT+,QT+,JTs,A5s".to_string(),
+                "22+,A9+,KT+,QT+,JT+,T9s,98s,87s,".to_string(),
+            ],
+            stacks: vec![10000, 10000],
+            pot: 100,
+            bet_sizes: vec![
+                vec![vec![0.5], vec![0.5], vec![0.5]],
+                vec![vec![0.5], vec![0.5], vec![0.5]],
+            ],
+            raise_sizes: vec![
+                vec![vec![1.0], vec![1.0], vec![1.0]],
+                vec![vec![1.0], vec![1.0], vec![1.0]],
+            ],
+            card_abstraction: vec!["null".to_string(), "emd".to_string(), "ochs".to_string()],
+        };
+        let mut solver = Solver::init(options).unwrap();
+        solver.run(10000);
+        // generate test data
+        let mut rng = thread_rng();
+        let mut test_data = vec![];
+        for _ in 0..1000 {
+            let action_idx = rng.gen_range(0, solver.infosets.len());
+            let idx = rng.gen_range(0, solver.infosets[action_idx].regrets.len());
+            let value = solver.infosets[action_idx].regrets[idx];
+            test_data.push((action_idx, idx, value));
+        }
+        assert_eq!(solver.save_regrets().is_ok(), true);
+        assert_eq!(solver.load_regrets().is_ok(), true);
+        // compare test data to original
+        for (action_idx, idx, value) in test_data {
+            assert_eq!(solver.infosets[action_idx].regrets[idx], value);
+        }
+    }
+
+    #[bench]
+    // 10,274,775 ns/iter (+/- 1,330,963)
     fn bench_update_strategy(b: &mut Bencher) {
         let options = SolverOptions {
             board_mask: get_card_mask("AhAdAc"),
@@ -562,6 +856,26 @@ mod tests {
         b.iter(|| {
             solver.update_strategy();
         });
+    }
+
+    #[test]
+    fn test_sample_pdf() {
+        let mut rng = thread_rng();
+        let pdf = vec![1.0, 0.0, 0.0];
+        let a = sample_pdf(&pdf, &mut rng);
+        assert_eq!(a, 0);
+        let pdf = vec![0.0, 1.0, 0.0];
+        let a = sample_pdf(&pdf, &mut rng);
+        assert_eq!(a, 1);
+        let pdf = vec![0.0, 0.0, 1.0];
+        let a = sample_pdf(&pdf, &mut rng);
+        assert_eq!(a, 2);
+        let pdf = vec![0.0, 0.5, 0.5];
+        let a = sample_pdf(&pdf, &mut rng);
+        assert_ne!(a, 0);
+        let pdf = vec![0.5, 0.5, 0.0];
+        let a = sample_pdf(&pdf, &mut rng);
+        assert_ne!(a, 2);
     }
 
     #[test]
