@@ -219,13 +219,17 @@ impl GameRunner {
                     stacks[1] += pot / 2;
                 }
             }
+
         }
+
         self.stacks = stacks;
 
         // deal cards
         self.broadcast_msg(PokerEvent::HandEnd {
             stacks: self.stacks,
             pot,
+            player0_cards: hand_state.player(0).cards().to_vec(),
+            player1_cards: hand_state.player(1).cards().to_vec(),
         })
         .await?;
         // wait for 5 seconds after hand ends

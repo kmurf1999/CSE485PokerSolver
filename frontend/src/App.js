@@ -290,7 +290,13 @@ export default function App() {
         break;
       }
       case 'HandEnd': {
-        const { stacks: newStacks } = message.event['HandEnd'];
+        const { player0_cards: cards0, player1_cards: cards1 , stacks: newStacks } = message.event['HandEnd'];
+
+        if (pos == 0) {
+          setVillanCards(cards1)
+        } else {
+          setVillanCards(cards0)
+        }
         setStacks(newStacks);
         setWagers([0, 0]);
 
@@ -350,7 +356,6 @@ export default function App() {
         setPot(newPot);
         break;
       }
-   
       default: break;
     }
   }

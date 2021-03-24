@@ -35,6 +35,8 @@ pub enum PokerEvent {
     HandEnd {
         pot: u32,
         stacks: [u32; MAX_PLAYERS],
+        player0_cards: Vec<u8>,
+        player1_cards: Vec<u8>,
     },
     DealCards {
         round: crate::round::BettingRound,
