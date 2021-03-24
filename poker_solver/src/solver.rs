@@ -691,8 +691,7 @@ impl Solver {
         Ok(solver)
     }
 
-    fn discount(&self, t: usize) {
-        let discount_factor = ((t / DISCOUNT_INTERVAL) / ((t / DISCOUNT_INTERVAL) + 1)) as f64;
+    fn discount(&self, discount_factor: f64) {
         for node in self.game_tree.iter() {
             if let GameNode::Action {
                 index,
