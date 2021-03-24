@@ -691,7 +691,7 @@ impl Solver {
         Ok(solver)
     }
 
-    fn discount(&self, discount_factor: f64) {
+    pub fn discount(&self, discount_factor: f64) {
         for node in self.game_tree.iter() {
             if let GameNode::Action {
                 index,
