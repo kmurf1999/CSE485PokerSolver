@@ -31,8 +31,8 @@ use thiserror::Error as ThisError;
 type Error = Box<dyn std::error::Error>;
 
 const PRUNE_THRESHOLD: f64 = -300_000_000.0;
-const STRATEGY_INTERVAL: usize = 10000;
-const DISCOUNT_INTERVAL: usize = 1000000;
+// const STRATEGY_INTERVAL: usize = 10_000;
+const DISCOUNT_INTERVAL: usize = 10_000_000;
 
 #[derive(Debug, ThisError)]
 pub enum SolverError {
@@ -691,7 +691,7 @@ impl Solver {
         Ok(solver)
     }
 
-    fn discount(&mut self, t: usize) {
+    fn discount(&self, t: usize) {
         let discount_factor = ((t / DISCOUNT_INTERVAL) / ((t / DISCOUNT_INTERVAL) + 1)) as f64;
         for node in self.game_tree.iter() {
             if let GameNode::Action {
@@ -701,22 +701,28 @@ impl Solver {
                 round: _,
             } = &node.data
             {
-                for regret in &mut self.infosets[*index as usize].regrets {
-                    *regret *= discount_factor;
-                }
-                for ssum in &mut self.infosets[*index as usize].strategy_sum {
-                    *ssum = (*ssum as f64 * discount_factor) as i32;
+                unsafe {
+                    let regrets = (&self.infosets[*index as usize].regrets as *const Vec<f64>)
+                        as *mut Vec<f64>;
+                    for regret in &mut *regrets {
+                        *regret *= discount_factor;
+                    }
+                    let ssums = (&self.infosets[*index as usize].strategy_sum as *const Vec<i32>)
+                        as *mut Vec<i32>;
+                    for ssum in &mut *ssums {
+                        *ssum = (*ssum as f64 * discount_factor) as i32;
+                    }
                 }
             }
         }
     }
     /// Run cfr for max_iters
     /// return evs for each player
-    pub fn run(&self, max_iterations: usize) -> Vec<f64> {
+    pub fn run(&self, iterations: usize) -> Vec<f64> {
         let arc_self = Arc::new(self);
         let thread_count = 8;
         let total_evs = Arc::new(Mutex::new(vec![0f64; self.n_players]));
-        self.iterations.store(0, atomic::Ordering::SeqCst);
+        let max_iterations = self.iterations.load(atomic::Ordering::SeqCst) + iterations;
         crossbeam::scope(|scope| {
             for _ in 0..thread_count {
                 let arc_self = arc_self.clone();
@@ -730,6 +736,17 @@ impl Solver {
                     }
                 });
             }
+            // spawn discounter
+            let arc_self = arc_self.clone();
+            scope.spawn(move |_| {
+                let mut i = self.iterations.load(atomic::Ordering::Relaxed);
+                while i < max_iterations {
+                    if i % DISCOUNT_INTERVAL == 0 {
+                        arc_self.discount(i);
+                    }
+                    i = self.iterations.load(atomic::Ordering::Relaxed);
+                }
+            });
         })
         .unwrap();
 
