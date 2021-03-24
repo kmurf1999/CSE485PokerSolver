@@ -720,7 +720,7 @@ impl Solver {
     /// return evs for each player
     pub fn run(&self, iterations: usize) -> Vec<f64> {
         let arc_self = Arc::new(self);
-        let thread_count = 8;
+        let thread_count = 32;
         let total_evs = Arc::new(Mutex::new(vec![0f64; self.n_players]));
         let max_iterations = self.iterations.load(atomic::Ordering::SeqCst) + iterations;
         crossbeam::scope(|scope| {
@@ -737,16 +737,16 @@ impl Solver {
                 });
             }
             // spawn discounter
-            let arc_self = arc_self.clone();
-            scope.spawn(move |_| {
-                let mut i = self.iterations.load(atomic::Ordering::Relaxed);
-                while i < max_iterations {
-                    if i % DISCOUNT_INTERVAL == 0 {
-                        arc_self.discount(i);
-                    }
-                    i = self.iterations.load(atomic::Ordering::Relaxed);
-                }
-            });
+            // let arc_self = arc_self.clone();
+            // scope.spawn(move |_| {
+            //     let mut i = self.iterations.load(atomic::Ordering::Relaxed);
+            //     while i < max_iterations {
+            //         if i % DISCOUNT_INTERVAL == 0 {
+            //             arc_self.discount(i);
+            //         }
+            //         i = self.iterations.load(atomic::Ordering::Relaxed);
+            //     }
+            // });
         })
         .unwrap();
 
@@ -755,7 +755,7 @@ impl Solver {
     /// runs max_iterations of best response and returns that players ev
     pub fn run_br(&self, max_iterations: usize, player: u8) -> f64 {
         let arc_self = Arc::new(self);
-        let thread_count = 8;
+        let thread_count = 32;
         let total_ev = Arc::new(Mutex::new(0f64));
         self.iterations.store(0, atomic::Ordering::SeqCst);
         crossbeam::scope(|scope| {
