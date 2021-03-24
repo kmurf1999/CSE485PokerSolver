@@ -6,10 +6,10 @@ use crate::sparse_and_dense::{generate_buckets, SparseAndDense};
 use crate::tree::Tree;
 use crate::tree_builder::{TreeBuilder, TreeBuilderOptions};
 use rand::{
-    distributions::{Distribution, Uniform, WeightedIndex},
+    distributions::{Distribution, Uniform},
     prelude::*,
-    rngs::{SmallRng, ThreadRng},
-    thread_rng, Rng,
+    rngs::SmallRng,
+    Rng,
 };
 use rust_poker::hand_evaluator::{evaluate, Hand, CARDS};
 use rust_poker::hand_range::{get_card_mask, HandRange};
@@ -22,14 +22,17 @@ use std::io;
 use std::io::prelude::*;
 use std::io::SeekFrom;
 use std::iter::FromIterator;
-use std::mem::{forget, size_of, transmute};
+use std::mem::{forget, size_of};
 use std::result::Result;
-use std::slice;
+use std::sync::atomic::{self, AtomicUsize};
+use std::sync::{Arc, Mutex};
 use thiserror::Error as ThisError;
 
 type Error = Box<dyn std::error::Error>;
-const PRUNE_THRESHOLD: i32 = -300_000_000;
+
+const PRUNE_THRESHOLD: f64 = -300_000_000.0;
 const STRATEGY_INTERVAL: usize = 10000;
+const DISCOUNT_INTERVAL: usize = 1000000;
 
 #[derive(Debug, ThisError)]
 pub enum SolverError {
@@ -53,41 +56,8 @@ pub enum SolverError {
 
 #[derive(Debug)]
 pub struct Infoset {
-    pub regrets: Vec<i32>,
+    pub regrets: Vec<f64>,
     pub strategy_sum: Vec<i32>,
-}
-
-/// Reads a Vector of type T from file
-/// todo fix this function
-fn read_vec_from_file<T>(file: &mut File, size: usize) -> Result<Vec<T>, Error> {
-    let mut buffer: Vec<T> = Vec::new();
-    unsafe {
-        let mut converted = Vec::<u8>::from_raw_parts(
-            buffer.as_mut_ptr() as *mut u8,
-            size * size_of::<T>(),
-            size * size_of::<T>(),
-        );
-        match file.read_to_end(&mut converted) {
-            Ok(s) => {
-                if converted.len() % size_of::<T>() != 0 {
-                    converted.truncate(size * size_of::<T>());
-                    forget(converted);
-                    // todo
-                    return Err(SolverError::TooManyPlayers.into());
-                }
-            }
-            Err(e) => {
-                converted.truncate(size * size_of::<T>());
-                forget(converted);
-                return Err(e.into());
-            }
-        }
-        let new_length = converted.len() / size_of::<T>();
-        let new_capacity = converted.len() / size_of::<T>();
-        buffer = Vec::from_raw_parts(converted.as_mut_ptr() as *mut T, new_length, new_capacity);
-        forget(converted);
-        Ok(buffer)
-    }
 }
 
 #[inline(always)]
@@ -115,7 +85,7 @@ impl Default for Infoset {
 impl Infoset {
     pub fn init(n_actions: usize, n_buckets: usize) -> Self {
         Infoset {
-            regrets: vec![0; n_actions * n_buckets],
+            regrets: vec![0f64; n_actions * n_buckets],
             strategy_sum: vec![0; n_actions * n_buckets],
         }
     }
@@ -126,8 +96,27 @@ impl Infoset {
         let mut strategy = vec![0f64; n_actions];
         let mut norm_sum = 0f64;
         for a in 0..n_actions {
-            strategy[a] = if self.regrets[a] > 0 {
-                self.regrets[a] as f64
+            strategy[a] = if regrets[a] > 0.0 { regrets[a] } else { 0.0 };
+            norm_sum += strategy[a];
+        }
+        for a in 0..n_actions {
+            if norm_sum > 0.0 {
+                strategy[a] /= norm_sum;
+            } else {
+                strategy[a] = 1.0 / n_actions as f64;
+            }
+        }
+        strategy
+    }
+    // get current strategy through regret-matching
+    pub fn cummulative_strategy(&self, bucket: usize, n_actions: usize) -> Vec<f64> {
+        let offset = bucket * n_actions;
+        let strategy_sum = &self.strategy_sum[offset..offset + n_actions];
+        let mut strategy = vec![0f64; n_actions];
+        let mut norm_sum = 0f64;
+        for a in 0..n_actions {
+            strategy[a] = if strategy_sum[a] > 0 {
+                strategy_sum[a] as f64
             } else {
                 0.0
             };
@@ -195,8 +184,6 @@ pub struct Solver {
     /// infoset for each action node index for each bucket
     /// plans to break them up by player and round in the future
     infosets: Vec<Infoset>,
-    /// random number generator
-    rng: ThreadRng,
     /// number of players
     n_players: usize,
     /// hand indexer for each round
@@ -205,17 +192,309 @@ pub struct Solver {
     start_round: BettingRound,
     /// number of betting rounds in this tree
     num_rounds: usize,
+    /// distribution for each hand range
+    /// used for sampling
+    combo_dists: Vec<Uniform<usize>>,
+    iterations: AtomicUsize,
+}
+
+pub struct SolverThread<'a> {
+    root: Arc<&'a Solver>,
+    rng: SmallRng,
+    /// sampled combo index for this hand
+    combo_idxs: Vec<usize>,
     /// sampled combo bucket for each player for each round
     combo_buckets: Vec<Vec<usize>>,
     /// score of each hand
     hand_scores: Vec<u16>,
     winner_mask: u8,
     winner_count: u8,
-    /// distribution for each hand range
-    /// used for sampling
-    combo_dists: Vec<Uniform<usize>>,
-    /// sampled combo index for this hand
-    combo_idxs: Vec<usize>,
+}
+
+impl<'a> SolverThread<'a> {
+    pub fn init(root: Arc<&'a Solver>) -> Self {
+        let n_players = root.n_players;
+        let n_rounds = root.num_rounds;
+        SolverThread {
+            root,
+            rng: SmallRng::from_entropy(),
+            combo_idxs: vec![0; n_players],
+            combo_buckets: vec![vec![0; n_rounds]; n_players],
+            hand_scores: vec![0; n_players],
+            winner_mask: 0,
+            winner_count: 0,
+        }
+    }
+    /// deal a hand and get player reach indexes, winning player, and buckets
+    pub fn deal(&mut self) {
+        // select a hole card pair
+        let mut used_card_mask = self.root.initial_board;
+        for (player, hr) in self.root.hand_ranges.iter().enumerate() {
+            loop {
+                let combo_idx = self.root.combo_dists[player].sample(&mut self.rng);
+                let combo_mask = (1u64 << hr.hands[combo_idx].0) | (1u64 << hr.hands[combo_idx].1);
+                if (combo_mask & used_card_mask) == 0 {
+                    self.combo_idxs[player] = combo_idx;
+                    used_card_mask |= combo_mask;
+                    break;
+                }
+            }
+        }
+        // copy board cards
+        let mut cards = [52u8; 7];
+        let mut i = 2;
+        for j in 0..CARD_COUNT {
+            if (self.root.initial_board & (1u64 << j)) != 0 {
+                cards[i] = j;
+                i += 1;
+            }
+        }
+        // generate remaining board cards
+        for j in i..7 {
+            loop {
+                let c = self.rng.gen_range(0, CARD_COUNT);
+                if ((1u64 << c) & used_card_mask) == 0 {
+                    cards[j] = c;
+                    used_card_mask |= 1u64 << c;
+                    break;
+                }
+            }
+        }
+        // score each hands
+        let mut board: Hand = Hand::default();
+        for c in &cards[2..7] {
+            board += CARDS[usize::from(*c)];
+        }
+        // generate combo buckes and score hands
+        for player in 0..self.root.n_players {
+            let hole_cards = &self.root.hand_ranges[player].hands[self.combo_idxs[player]];
+            cards[0] = hole_cards.0;
+            cards[1] = hole_cards.1;
+            let hand = board + CARDS[usize::from(cards[0])] + CARDS[usize::from(cards[1])];
+            self.hand_scores[player] = evaluate(&hand);
+            for round in 0..self.root.num_rounds {
+                let cannon_idx = self.root.hand_indexers[usize::from(self.root.start_round) + round]
+                    .get_index(&cards) as usize;
+                let bucket_idx = self.root.card_abstraction[round].get(cannon_idx) as usize;
+                let dense_idx = self.root.buckets[player][round]
+                    .sparse_to_dense(bucket_idx)
+                    .unwrap();
+                self.combo_buckets[player][round] = dense_idx;
+            }
+        }
+        self.winner_mask = 0u8;
+        self.winner_count = 0u8;
+        let mut high_score = 0u16;
+        for i in 0..self.root.n_players {
+            match self.hand_scores[i].cmp(&high_score) {
+                Ordering::Greater => {
+                    self.winner_mask = 1u8 << i;
+                    self.winner_count = 1;
+                    high_score = self.hand_scores[i];
+                }
+                Ordering::Equal => {
+                    self.winner_mask |= 1u8 << i;
+                    self.winner_count += 1;
+                }
+                _ => {}
+            }
+        }
+    }
+    pub fn run(&mut self, max_iterations: usize) -> Vec<f64> {
+        let mut evs = vec![0f64; self.root.n_players];
+        while self.root.iterations.fetch_add(1, atomic::Ordering::SeqCst) < max_iterations {
+            self.deal();
+            let prune = self.rng.gen_range(0.0, 1.0) < 0.05;
+            for player in 0..self.root.n_players {
+                // TODO discount
+                // TODO calculate actual initial reach prob
+                evs[player] += self.traverse(0, 1.0, player as u8, prune);
+            }
+        }
+        evs
+    }
+    pub fn run_br(&mut self, max_iterations: usize, player: u8) -> f64 {
+        let mut ev = 0f64;
+        while self.root.iterations.fetch_add(1, atomic::Ordering::SeqCst) < max_iterations {
+            self.deal();
+            ev += self.traverse_br(0, 1.0, player);
+        }
+        ev
+    }
+    /// CFR algorithm recursivly traverses game tree and applys regret-matching
+    ///
+    /// # Arguments
+    ///
+    /// * `node_idx` index of area-allocated tree node
+    /// * `cfr_reach` counterfactual reach probability
+    /// * `player` index of player that is training
+    pub fn traverse_br(&mut self, node_idx: usize, cfr_reach: f64, player: u8) -> f64 {
+        let node = self.root.game_tree.get_node(node_idx);
+        match &node.data {
+            GameNode::Terminal {
+                value,
+                ttype,
+                last_to_act,
+            } => {
+                if let TerminalType::Fold = ttype {
+                    if *last_to_act == player {
+                        -1.0 * (*value as f64)
+                    } else {
+                        *value as f64
+                    }
+                } else {
+                    if ((1u8 << player) & self.winner_mask) != 0 {
+                        return (*value as f64) / (self.winner_count as f64);
+                    }
+                    -1.0 * (*value as f64 / (self.winner_count as f64))
+                }
+            }
+            GameNode::Action {
+                round,
+                index,
+                player: node_player,
+                actions,
+            } => {
+                // if we are the player acting
+                let n_actions = actions.len();
+                let bucket = self.combo_buckets[usize::from(*node_player)][usize::from(*round)];
+                let offset = n_actions * bucket;
+                if *node_player == player {
+                    let strategy =
+                        self.root.infosets[*index as usize].current_strategy(bucket, n_actions);
+                    let mut node_util = 0f64;
+                    let mut action_utils = vec![0f64; n_actions];
+                    let mut explored = vec![false; n_actions];
+                    for a in 0..n_actions {
+                        action_utils[a] = self.traverse_br(node.children[a], cfr_reach, player);
+                        node_util += action_utils[a] * strategy[a];
+                    }
+                    // update regrets
+                    unsafe {
+                        let regrets = (&self.root.infosets[*index as usize].regrets
+                            [offset..offset + n_actions]
+                            as *const [f64]) as *mut [f64];
+                        for a in 0..n_actions {
+                            (&mut *regrets)[a] += action_utils[a] - node_util;
+                        }
+                    }
+                    return node_util;
+                }
+                let strategy =
+                    self.root.infosets[*index as usize].cummulative_strategy(bucket, n_actions);
+                let sampled_action = sample_pdf(&strategy, &mut self.rng);
+                // update cummulative strategy
+                self.traverse_br(
+                    node.children[sampled_action],
+                    cfr_reach * strategy[sampled_action],
+                    player,
+                )
+            }
+            _ => self.traverse_br(node.children[0], cfr_reach, player),
+        }
+    }
+    /// CFR algorithm recursivly traverses game tree and applys regret-matching
+    ///
+    /// # Arguments
+    ///
+    /// * `node_idx` index of area-allocated tree node
+    /// * `cfr_reach` counterfactual reach probability
+    /// * `player` index of player that is training
+    /// * `prune` should we apply negative regret pruning
+    pub fn traverse(&mut self, node_idx: usize, cfr_reach: f64, player: u8, prune: bool) -> f64 {
+        let node = self.root.game_tree.get_node(node_idx);
+        match &node.data {
+            GameNode::Terminal {
+                value,
+                ttype,
+                last_to_act,
+            } => {
+                if let TerminalType::Fold = ttype {
+                    if *last_to_act == player {
+                        -1.0 * (*value as f64)
+                    } else {
+                        *value as f64
+                    }
+                } else {
+                    if ((1u8 << player) & self.winner_mask) != 0 {
+                        return (*value as f64) / (self.winner_count as f64);
+                    }
+                    -1.0 * (*value as f64 / (self.winner_count as f64))
+                }
+            }
+            GameNode::Action {
+                round,
+                index,
+                player: node_player,
+                actions,
+            } => {
+                // if we are the player acting
+                let n_actions = actions.len();
+                let bucket = self.combo_buckets[usize::from(*node_player)][usize::from(*round)];
+                let offset = n_actions * bucket;
+                let strategy =
+                    self.root.infosets[*index as usize].current_strategy(bucket, n_actions);
+                if *node_player == player {
+                    let mut node_util = 0f64;
+                    let mut action_utils = vec![0f64; n_actions];
+                    let mut explored = vec![false; n_actions];
+                    if prune {
+                        let regrets = &self.root.infosets[*index as usize].regrets
+                            [offset..offset + n_actions];
+                        for a in 0..n_actions {
+                            let child_is_terminal = matches!(
+                                &self.root.game_tree.get_node(node.children[a]).data,
+                                GameNode::Terminal {
+                                    last_to_act: _,
+                                    value: _,
+                                    ttype: _
+                                }
+                            );
+                            if child_is_terminal || regrets[a] > PRUNE_THRESHOLD {
+                                explored[a] = true;
+                                action_utils[a] =
+                                    self.traverse(node.children[a], cfr_reach, player, prune);
+                                node_util += action_utils[a] * strategy[a];
+                            }
+                        }
+                    } else {
+                        for a in 0..n_actions {
+                            action_utils[a] =
+                                self.traverse(node.children[a], cfr_reach, player, prune);
+                            node_util += action_utils[a] * strategy[a];
+                        }
+                    }
+                    // update regrets
+                    unsafe {
+                        let regrets = (&self.root.infosets[*index as usize].regrets
+                            [offset..offset + n_actions]
+                            as *const [f64]) as *mut [f64];
+                        for a in 0..n_actions {
+                            if !prune || explored[a] {
+                                (&mut *regrets)[a] += action_utils[a] - node_util;
+                            }
+                        }
+                    }
+                    return node_util;
+                }
+                let sampled_action = sample_pdf(&strategy, &mut self.rng);
+                // update cummulative strategy
+                unsafe {
+                    let strategy_sum = (&self.root.infosets[*index as usize].strategy_sum
+                        [offset..offset + n_actions]
+                        as *const [i32]) as *mut [i32];
+                    (&mut *strategy_sum)[sampled_action] += 1;
+                }
+                self.traverse(
+                    node.children[sampled_action],
+                    cfr_reach * strategy[sampled_action],
+                    player,
+                    prune,
+                )
+            }
+            _ => self.traverse(node.children[0], cfr_reach, player, prune),
+        }
+    }
 }
 
 impl Solver {
@@ -402,217 +681,87 @@ impl Solver {
             buckets,
             hand_ranges,
             infosets,
-            rng: thread_rng(),
             n_players,
             hand_indexers,
             start_round,
             num_rounds,
-            combo_buckets,
             combo_dists,
-            combo_idxs,
-            hand_scores,
-            winner_count: 0,
-            winner_mask: 0,
+            iterations: AtomicUsize::new(0),
         };
         Ok(solver)
     }
-    /// deal a hand and get player reach indexes, winning player, and buckets
-    pub fn deal(&mut self) {
-        // select a hole card pair
-        let mut used_card_mask = self.initial_board;
-        for (player, hr) in self.hand_ranges.iter().enumerate() {
-            loop {
-                let combo_idx = self.combo_dists[player].sample(&mut self.rng);
-                let combo_mask = (1u64 << hr.hands[combo_idx].0) | (1u64 << hr.hands[combo_idx].1);
-                if (combo_mask & used_card_mask) == 0 {
-                    self.combo_idxs[player] = combo_idx;
-                    used_card_mask |= combo_mask;
-                    break;
-                }
-            }
-        }
-        // copy board cards
-        let mut cards = [52u8; 7];
-        let mut i = 2;
-        for j in 0..CARD_COUNT {
-            if (self.initial_board & (1u64 << j)) != 0 {
-                cards[i] = j;
-                i += 1;
-            }
-        }
-        // generate remaining board cards
-        for j in i..7 {
-            loop {
-                let c = self.rng.gen_range(0, CARD_COUNT);
-                if ((1u64 << c) & used_card_mask) == 0 {
-                    cards[j] = c;
-                    used_card_mask |= 1u64 << c;
-                    break;
-                }
-            }
-        }
-        // score each hands
-        let mut board: Hand = Hand::default();
-        for c in &cards[2..7] {
-            board += CARDS[usize::from(*c)];
-        }
-        // generate combo buckes and score hands
-        for player in 0..self.n_players {
-            let hole_cards = &self.hand_ranges[player].hands[self.combo_idxs[player]];
-            cards[0] = hole_cards.0;
-            cards[1] = hole_cards.1;
-            let hand = board + CARDS[usize::from(cards[0])] + CARDS[usize::from(cards[1])];
-            self.hand_scores[player] = evaluate(&hand);
-            for round in 0..self.num_rounds {
-                let cannon_idx = self.hand_indexers[usize::from(self.start_round) + round]
-                    .get_index(&cards) as usize;
-                let bucket_idx = self.card_abstraction[round].get(cannon_idx) as usize;
-                let dense_idx = self.buckets[player][round]
-                    .sparse_to_dense(bucket_idx)
-                    .unwrap();
-                self.combo_buckets[player][round] = dense_idx;
-            }
-        }
-        self.winner_mask = 0u8;
-        self.winner_count = 0u8;
-        let mut high_score = 0u16;
-        for i in 0..self.n_players {
-            match self.hand_scores[i].cmp(&high_score) {
-                Ordering::Greater => {
-                    self.winner_mask = 1u8 << i;
-                    self.winner_count = 1;
-                    high_score = self.hand_scores[i];
-                }
-                Ordering::Equal => {
-                    self.winner_mask |= 1u8 << i;
-                    self.winner_count += 1;
-                }
-                _ => {}
-            }
-        }
-    }
-    fn update_strategy(&mut self) {
-        // for node in self.game_tree.iter() {
-        //     if let GameNode::Action {
-        //         index,
-        //         player: _,
-        //         actions: _,
-        //         round: _,
-        //     } = &node.data
-        //     {
-        //         for infoset in &mut self.infosets[*index as usize] {
-        //             let s = infoset.current_strategy();
-        //             let a = sample_pdf(&s, &mut self.rng);
-        //             infoset.strategy_sum[a] += 1;
-        //         }
-        //     }
-        // }
-    }
-    fn traverse(&self, node_idx: usize, cfr_reach: f64, player: u8, prune: bool) -> f64 {
-        let node = self.game_tree.get_node(node_idx);
-        match &node.data {
-            GameNode::Terminal {
-                value,
-                ttype,
-                last_to_act,
-            } => {
-                if let TerminalType::Fold = ttype {
-                    if *last_to_act == player {
-                        -1.0 * (*value as f64)
-                    } else {
-                        *value as f64
-                    }
-                } else {
-                    if ((1u8 << player) & self.winner_mask) != 0 {
-                        return (*value as f64) / (self.winner_count as f64);
-                    }
-                    -1.0 * (*value as f64 / (self.winner_count as f64))
-                }
-            }
-            GameNode::Action {
-                round,
+
+    fn discount(&mut self, t: usize) {
+        let discount_factor = ((t / DISCOUNT_INTERVAL) / ((t / DISCOUNT_INTERVAL) + 1)) as f64;
+        for node in self.game_tree.iter() {
+            if let GameNode::Action {
                 index,
-                player: node_player,
-                actions,
-            } => {
-                // if we are the player acting
-                let n_actions = actions.len();
-                let bucket = self.combo_buckets[usize::from(*node_player)][usize::from(*round)];
-                let offset = n_actions * bucket;
-                let strategy = self.infosets[*index as usize].current_strategy(bucket, n_actions);
-                if *node_player == player {
-                    let mut node_util = 0f64;
-                    let mut action_utils = vec![0f64; n_actions];
-                    let mut explored = vec![false; n_actions];
-                    if prune {
-                        let regrets =
-                            &self.infosets[*index as usize].regrets[offset..offset + n_actions];
-                        for a in 0..n_actions {
-                            let child_is_terminal = matches!(
-                                &self.game_tree.get_node(node.children[a]).data,
-                                GameNode::Terminal {
-                                    last_to_act: _,
-                                    value: _,
-                                    ttype: _
-                                }
-                            );
-                            if child_is_terminal || regrets[a] > PRUNE_THRESHOLD {
-                                explored[a] = true;
-                                action_utils[a] =
-                                    self.traverse(node.children[a], cfr_reach, player, prune);
-                                node_util += action_utils[a] * strategy[a];
-                            }
-                        }
-                    } else {
-                        for a in 0..n_actions {
-                            action_utils[a] =
-                                self.traverse(node.children[a], cfr_reach, player, prune);
-                            node_util += action_utils[a] * strategy[a];
-                        }
-                    }
-                    unsafe {
-                        let mut regrets =
-                            (&self.infosets[*index as usize].regrets[offset..offset + n_actions]
-                                as *const [i32]) as *mut [i32];
-                        for a in 0..n_actions {
-                            if !prune || explored[a] {
-                                (&mut *regrets)[a] += (action_utils[a] - node_util) as i32;
-                            }
-                        }
-                    }
-                    return node_util;
+                player: _,
+                actions: _,
+                round: _,
+            } = &node.data
+            {
+                for regret in &mut self.infosets[*index as usize].regrets {
+                    *regret *= discount_factor;
                 }
-                let mut rng = SmallRng::from_entropy();
-                let sampled_action = sample_pdf(&strategy, &mut rng);
-                self.traverse(
-                    node.children[sampled_action],
-                    cfr_reach * strategy[sampled_action],
-                    player,
-                    prune,
-                )
+                for ssum in &mut self.infosets[*index as usize].strategy_sum {
+                    *ssum = (*ssum as f64 * discount_factor) as i32;
+                }
             }
-            _ => self.traverse(node.children[0], cfr_reach, player, prune),
         }
     }
-    pub fn run(&mut self, max_iterations: usize) {
-        let mut evs = vec![0.0; self.n_players];
-        for t in 1..max_iterations {
-            if (t % STRATEGY_INTERVAL) == 0 {
-                self.update_strategy();
+    /// Run cfr for max_iters
+    /// return evs for each player
+    pub fn run(&self, max_iterations: usize) -> Vec<f64> {
+        let arc_self = Arc::new(self);
+        let thread_count = 8;
+        let total_evs = Arc::new(Mutex::new(vec![0f64; self.n_players]));
+        self.iterations.store(0, atomic::Ordering::SeqCst);
+        crossbeam::scope(|scope| {
+            for _ in 0..thread_count {
+                let arc_self = arc_self.clone();
+                let total_evs = total_evs.clone();
+                scope.spawn(move |_| {
+                    let mut thread = SolverThread::init(arc_self);
+                    let thread_evs = thread.run(max_iterations);
+                    let mut total_evs = total_evs.lock().unwrap();
+                    for i in 0..thread_evs.len() {
+                        total_evs[i] += thread_evs[i];
+                    }
+                });
             }
-            for p in 0..self.n_players {
-                self.deal();
-                // TODO start cfr reach with product of actual combo weights
-                let prune = self.rng.gen_range(0.0, 1.0) < 0.05;
-                evs[p] += self.traverse(0, 1.0, p as u8, prune);
+        })
+        .unwrap();
+
+        Arc::try_unwrap(total_evs).unwrap().into_inner().unwrap()
+    }
+    /// runs max_iterations of best response and returns that players ev
+    pub fn run_br(&self, max_iterations: usize, player: u8) -> f64 {
+        let arc_self = Arc::new(self);
+        let thread_count = 8;
+        let total_ev = Arc::new(Mutex::new(0f64));
+        self.iterations.store(0, atomic::Ordering::SeqCst);
+        crossbeam::scope(|scope| {
+            for _ in 0..thread_count {
+                let total_ev = total_ev.clone();
+                let arc_self = arc_self.clone();
+                scope.spawn(move |_| {
+                    let mut thread = SolverThread::init(arc_self);
+                    let thread_ev = thread.run_br(max_iterations, player);
+                    let mut total_ev = total_ev.lock().unwrap();
+                    *total_ev += thread_ev;
+                });
             }
-        }
-        println!("{:?}", evs);
+        })
+        .unwrap();
+
+        Arc::try_unwrap(total_ev).unwrap().into_inner().unwrap()
     }
     /// save regrets to a file
-    fn save_regrets(&self) -> Result<(), Error> {
+    pub fn save_regrets(&self) -> Result<(), Error> {
         let mut file = OpenOptions::new()
             .write(true)
+            .create(true)
             .truncate(true)
             .open(format!("data/regrets-{}.dat", self.options_string))?;
         for action_index in 0..self.infosets.len() {
@@ -620,8 +769,20 @@ impl Solver {
         }
         Ok(())
     }
+    /// save regrets to a file
+    pub fn save_strategy(&self) -> Result<(), Error> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(format!("data/strategy-{}.dat", self.options_string))?;
+        for action_index in 0..self.infosets.len() {
+            file.write_slice_to_file(&self.infosets[action_index].strategy_sum[..])?;
+        }
+        Ok(())
+    }
     /// load regrets from a file
-    fn load_regrets(&mut self) -> Result<(), Error> {
+    pub fn load_regrets(&mut self) -> Result<(), Error> {
         let mut file = OpenOptions::new()
             .read(true)
             .open(format!("data/regrets-{}.dat", self.options_string))?;
@@ -629,14 +790,34 @@ impl Solver {
         for action_index in 0..self.infosets.len() {
             file.seek(SeekFrom::Start(offset))?;
             let size = self.infosets[action_index].regrets.len();
-            let mut buffer = vec![0; size * size_of::<i32>()];
-            file.read(&mut buffer)?;
+            let mut buffer = vec![0; size * size_of::<f64>()];
+            file.read_exact(&mut buffer)?;
             unsafe {
                 self.infosets[action_index].regrets =
+                    Vec::from_raw_parts(buffer.as_mut_ptr() as *mut f64, size, size);
+                forget(buffer);
+            }
+            offset += (size * size_of::<f64>()) as u64;
+        }
+        Ok(())
+    }
+    /// load regrets from a file
+    pub fn load_strategy(&mut self) -> Result<(), Error> {
+        let mut file = OpenOptions::new()
+            .read(true)
+            .open(format!("data/strategy-{}.dat", self.options_string))?;
+        let mut offset = 0u64;
+        for action_index in 0..self.infosets.len() {
+            file.seek(SeekFrom::Start(offset))?;
+            let size = self.infosets[action_index].strategy_sum.len();
+            let mut buffer = vec![0; size * size_of::<i32>()];
+            file.read_exact(&mut buffer)?;
+            unsafe {
+                self.infosets[action_index].strategy_sum =
                     Vec::from_raw_parts(buffer.as_mut_ptr() as *mut i32, size, size);
                 forget(buffer);
             }
-            offset += (self.infosets[action_index].regrets.len() * size_of::<i32>()) as u64;
+            offset += (size * size_of::<i32>()) as u64;
         }
         Ok(())
     }
@@ -698,54 +879,54 @@ mod tests {
         assert_eq!(solver.is_ok(), true);
     }
 
-    #[bench]
-    // 1,062 ns/iter (+/- 62)
-    fn bench_deal(b: &mut Bencher) {
-        let options = SolverOptions {
-            board_mask: get_card_mask("AhAdAc"),
-            hand_ranges: vec!["random".to_string(), "random".to_string()],
-            stacks: vec![10000, 10000],
-            pot: 100,
-            bet_sizes: vec![
-                vec![vec![0.5], vec![0.5], vec![0.5]],
-                vec![vec![0.5], vec![0.5], vec![0.5]],
-            ],
-            raise_sizes: vec![
-                vec![vec![1.0], vec![1.0], vec![1.0]],
-                vec![vec![1.0], vec![1.0], vec![1.0]],
-            ],
-            card_abstraction: vec!["null".to_string(), "emd".to_string(), "ochs".to_string()],
-        };
-        let mut solver = Solver::init(options).unwrap();
-        b.iter(|| {
-            solver.deal();
-        });
-    }
+    // #[bench]
+    // // 1,062 ns/iter (+/- 62)
+    // fn bench_deal(b: &mut Bencher) {
+    //     let options = SolverOptions {
+    //         board_mask: get_card_mask("AhAdAc"),
+    //         hand_ranges: vec!["random".to_string(), "random".to_string()],
+    //         stacks: vec![10000, 10000],
+    //         pot: 100,
+    //         bet_sizes: vec![
+    //             vec![vec![0.5], vec![0.5], vec![0.5]],
+    //             vec![vec![0.5], vec![0.5], vec![0.5]],
+    //         ],
+    //         raise_sizes: vec![
+    //             vec![vec![1.0], vec![1.0], vec![1.0]],
+    //             vec![vec![1.0], vec![1.0], vec![1.0]],
+    //         ],
+    //         card_abstraction: vec!["null".to_string(), "emd".to_string(), "ochs".to_string()],
+    //     };
+    //     let mut solver = Solver::init(options).unwrap();
+    //     b.iter(|| {
+    //         solver.deal();
+    //     });
+    // }
 
-    #[bench]
-    // 18,400 ns/iter (+/- 7,624)
-    fn bench_traverse_prune(b: &mut Bencher) {
-        let options = SolverOptions {
-            board_mask: get_card_mask("AhAdAc"),
-            hand_ranges: vec!["random".to_string(), "random".to_string()],
-            stacks: vec![10000, 10000],
-            pot: 100,
-            bet_sizes: vec![
-                vec![vec![0.5], vec![0.5], vec![0.5]],
-                vec![vec![0.5], vec![0.5], vec![0.5]],
-            ],
-            raise_sizes: vec![
-                vec![vec![1.0], vec![1.0], vec![1.0]],
-                vec![vec![1.0], vec![1.0], vec![1.0]],
-            ],
-            card_abstraction: vec!["null".to_string(), "emd".to_string(), "ochs".to_string()],
-        };
-        let mut solver = Solver::init(options).unwrap();
-        solver.deal();
-        b.iter(|| {
-            solver.traverse(0, 1.0, 0, true);
-        });
-    }
+    // #[bench]
+    // // 18,400 ns/iter (+/- 7,624)
+    // fn bench_traverse_prune(b: &mut Bencher) {
+    //     let options = SolverOptions {
+    //         board_mask: get_card_mask("AhAdAc"),
+    //         hand_ranges: vec!["random".to_string(), "random".to_string()],
+    //         stacks: vec![10000, 10000],
+    //         pot: 100,
+    //         bet_sizes: vec![
+    //             vec![vec![0.5], vec![0.5], vec![0.5]],
+    //             vec![vec![0.5], vec![0.5], vec![0.5]],
+    //         ],
+    //         raise_sizes: vec![
+    //             vec![vec![1.0], vec![1.0], vec![1.0]],
+    //             vec![vec![1.0], vec![1.0], vec![1.0]],
+    //         ],
+    //         card_abstraction: vec!["null".to_string(), "emd".to_string(), "ochs".to_string()],
+    //     };
+    //     let mut solver = Solver::init(options).unwrap();
+    //     solver.deal();
+    //     b.iter(|| {
+    //         solver.traverse(0, 1.0, 0, true);
+    //     });
+    // }
 
     #[bench]
     // 38,969,912 ns/iter (+/- 14,411,448)
@@ -796,6 +977,30 @@ mod tests {
     }
 
     #[test]
+    fn test_convergence() {
+        let options = SolverOptions {
+            board_mask: get_card_mask("QhJdTsAc"),
+            hand_ranges: vec!["random".to_string(), "random".to_string()],
+            stacks: vec![10000, 10000],
+            pot: 100,
+            bet_sizes: vec![vec![vec![0.5], vec![0.5]], vec![vec![0.5], vec![0.5]]],
+            raise_sizes: vec![vec![vec![1.0], vec![1.0]], vec![vec![1.0], vec![1.0]]],
+            card_abstraction: vec!["null".to_string(), "ochs".to_string()],
+        };
+        let mut solver = Solver::init(options).unwrap();
+        for i in 0..10 {
+            if i > 0 {
+                solver.load_regrets().unwrap();
+                solver.load_strategy().unwrap();
+            }
+            let evs = solver.run(1000000);
+            let new_ev = solver.run_br(1000000, 0).unwrap();
+            new_ev /= 10000.0;
+            println!("dEV {:?}", (new_ev - evs[0]).abs());
+        }
+    }
+
+    #[test]
     fn test_save_load() {
         let options = SolverOptions {
             board_mask: get_card_mask("QhJdTs"),
@@ -835,11 +1040,14 @@ mod tests {
     }
 
     #[bench]
-    // 10,274,775 ns/iter (+/- 1,330,963)
-    fn bench_update_strategy(b: &mut Bencher) {
+    // 3,011,828 ns/iter (+/- 643,560)
+    fn solver_bench_save(b: &mut Bencher) {
         let options = SolverOptions {
-            board_mask: get_card_mask("AhAdAc"),
-            hand_ranges: vec!["random".to_string(), "random".to_string()],
+            board_mask: get_card_mask("QhJdTs"),
+            hand_ranges: vec![
+                "22+,AT+,KT+,QT+,JTs,A5s".to_string(),
+                "22+,A9+,KT+,QT+,JT+,T9s,98s,87s,".to_string(),
+            ],
             stacks: vec![10000, 10000],
             pot: 100,
             bet_sizes: vec![
@@ -853,8 +1061,39 @@ mod tests {
             card_abstraction: vec!["null".to_string(), "emd".to_string(), "ochs".to_string()],
         };
         let mut solver = Solver::init(options).unwrap();
+        solver.run(10000);
         b.iter(|| {
-            solver.update_strategy();
+            solver.save_regrets().unwrap();
+        });
+    }
+
+    #[bench]
+    // 441,453 ns/iter (+/- 113,647)
+    fn solver_bench_load(b: &mut Bencher) {
+        let options = SolverOptions {
+            board_mask: get_card_mask("QhJdTs"),
+            hand_ranges: vec![
+                "22+,AT+,KT+,QT+,JTs,A5s".to_string(),
+                "22+,A9+,KT+,QT+,JT+,T9s,98s,87s,".to_string(),
+            ],
+            stacks: vec![10000, 10000],
+            pot: 100,
+            bet_sizes: vec![
+                vec![vec![0.5], vec![0.5], vec![0.5]],
+                vec![vec![0.5], vec![0.5], vec![0.5]],
+            ],
+            raise_sizes: vec![
+                vec![vec![1.0], vec![1.0], vec![1.0]],
+                vec![vec![1.0], vec![1.0], vec![1.0]],
+            ],
+            card_abstraction: vec!["null".to_string(), "emd".to_string(), "ochs".to_string()],
+        };
+        let mut solver = Solver::init(options).unwrap();
+        solver.run(10000);
+        solver.save_regrets().unwrap();
+        // generate test data
+        b.iter(|| {
+            solver.load_regrets().unwrap();
         });
     }
 
