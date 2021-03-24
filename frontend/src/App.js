@@ -16,29 +16,30 @@ function suitToChar(suit) {
   switch(suit) {
     case 0: return 'S';
     case 1: return 'H';
-    case 2: return 'C';
-    case 3: return 'D';
+    case 2: return 'D';
+    case 3: return 'C';
     case 4: return 'B';
     default: return '';
   }
 }
 
 function rankToChar(rank) {
-  switch(rank) {
+  switch(parseInt(rank)) {
+    case 13: return '2';
     case 12: return 'A';
-    case 11: return 'K';
+    case 11: return 'K'; //+2 ==> A
     case 10: return 'Q';
     case 9: return 'J';
     case 8: return 'T';
-    default: return String(rank + 2);
+    default: return String(parseInt(rank + 2));
   }
 }
 
-
-function Card({ index }) {
+function Card({index}) {
+  //
   const classes = useStyles();
-  let rank = rankToChar(index % 13);
-  let suit = suitToChar(Math.floor(index / 14));
+  let rank = rankToChar(index / 4);
+  let suit = suitToChar(Math.floor(index % 4));
     if (index === 99){
         rank = 1
         suit = 'B'
@@ -217,6 +218,8 @@ const useStyles = makeStyles((theme) => ({
   }
 }));
 
+
+
 export default function App() {
    const classes = useStyles();
   let [client, setClient] = useState(null);
@@ -267,6 +270,7 @@ export default function App() {
         }
       }
   });
+
   function HandleMessage(message) {
       //TODO handling messages now works, we have to implement what to do in each event
     const eventType = typeof message.event === "string" ? message.event : Object.keys(message.event)[0];
@@ -295,9 +299,9 @@ export default function App() {
         break;
       }
       case 'DealCards': {
-        const { round, cards } = message.event['DealCards'];
+        const { round: round, cards: cards, test: test } = message.event['DealCards'];
         switch (round) {
-            case 'PREFLOP':
+          case 'PREFLOP':
                 setHeroCards(cards)
                 break;
             case 'FLOP':
