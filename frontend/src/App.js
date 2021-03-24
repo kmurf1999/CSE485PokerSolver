@@ -299,7 +299,7 @@ export default function App() {
         break;
       }
       case 'DealCards': {
-        const { round: round, cards: cards, test: test } = message.event['DealCards'];
+        const { round: round, cards: cards} = message.event['DealCards'];
         switch (round) {
           case 'PREFLOP':
                 setHeroCards(cards)
