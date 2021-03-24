@@ -381,7 +381,9 @@ impl<'a> SolverThread<'a> {
                     return node_util;
                 }
                 let strategy =
-                    self.root.infosets[*index as usize].cummulative_strategy(bucket, n_actions);
+                    self.root.infosets[*index as usize].current_strategy(bucket, n_actions);
+                // let strategy =
+                // self.root.infosets[*index as usize].cummulative_strategy(bucket, n_actions);
                 let sampled_action = sample_pdf(&strategy, &mut self.rng);
                 // update cummulative strategy
                 self.traverse_br(
