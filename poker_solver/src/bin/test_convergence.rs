@@ -83,7 +83,7 @@ fn test_flop_convergence() {
         solver.save_regrets().unwrap();
         solver.save_strategy().unwrap();
         let mut new_ev = solver.run_br(100_000_000, if i % 2 == 0 { 0 } else { 1 });
-        solver.discount((i as f64 / (i as f64 + 1.0)));
+        // solver.discount((i as f64 / (i as f64 + 1.0)));
         solver.load_regrets().unwrap();
         solver.load_strategy().unwrap();
         new_ev /= 100_000_000.0;

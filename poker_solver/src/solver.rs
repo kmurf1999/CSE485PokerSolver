@@ -57,7 +57,7 @@ pub enum SolverError {
 #[derive(Debug)]
 pub struct Infoset {
     pub regrets: Vec<f64>,
-    pub strategy_sum: Vec<i32>,
+    pub strategy_sum: Vec<f64>,
 }
 
 #[inline(always)]
@@ -86,7 +86,7 @@ impl Infoset {
     pub fn init(n_actions: usize, n_buckets: usize) -> Self {
         Infoset {
             regrets: vec![0f64; n_actions * n_buckets],
-            strategy_sum: vec![0; n_actions * n_buckets],
+            strategy_sum: vec![0f64; n_actions * n_buckets],
         }
     }
     // get current strategy through regret-matching
@@ -115,8 +115,8 @@ impl Infoset {
         let mut strategy = vec![0f64; n_actions];
         let mut norm_sum = 0f64;
         for a in 0..n_actions {
-            strategy[a] = if strategy_sum[a] > 0 {
-                strategy_sum[a] as f64
+            strategy[a] = if strategy_sum[a] > 0.0 {
+                strategy_sum[a]
             } else {
                 0.0
             };
@@ -308,7 +308,7 @@ impl<'a> SolverThread<'a> {
             for player in 0..self.root.n_players {
                 // TODO discount
                 // TODO calculate actual initial reach prob
-                evs[player] += self.traverse(0, 1.0, player as u8, prune);
+                evs[player] += self.traverse(0, player as u8, prune);
             }
         }
         evs
@@ -317,7 +317,7 @@ impl<'a> SolverThread<'a> {
         let mut ev = 0f64;
         while self.root.iterations.fetch_add(1, atomic::Ordering::SeqCst) < max_iterations {
             self.deal();
-            ev += self.traverse_br(0, 1.0, player);
+            ev += self.traverse_br(0, player);
         }
         ev
     }
@@ -328,7 +328,7 @@ impl<'a> SolverThread<'a> {
     /// * `node_idx` index of area-allocated tree node
     /// * `cfr_reach` counterfactual reach probability
     /// * `player` index of player that is training
-    pub fn traverse_br(&mut self, node_idx: usize, cfr_reach: f64, player: u8) -> f64 {
+    pub fn traverse_br(&mut self, node_idx: usize, player: u8) -> f64 {
         let node = self.root.game_tree.get_node(node_idx);
         match &node.data {
             GameNode::Terminal {
@@ -366,7 +366,7 @@ impl<'a> SolverThread<'a> {
                     let mut action_utils = vec![0f64; n_actions];
                     let mut explored = vec![false; n_actions];
                     for a in 0..n_actions {
-                        action_utils[a] = self.traverse_br(node.children[a], cfr_reach, player);
+                        action_utils[a] = self.traverse_br(node.children[a], player);
                         node_util += action_utils[a] * strategy[a];
                     }
                     // update regrets
@@ -386,13 +386,9 @@ impl<'a> SolverThread<'a> {
                 // self.root.infosets[*index as usize].cummulative_strategy(bucket, n_actions);
                 let sampled_action = sample_pdf(&strategy, &mut self.rng);
                 // update cummulative strategy
-                self.traverse_br(
-                    node.children[sampled_action],
-                    cfr_reach * strategy[sampled_action],
-                    player,
-                )
+                self.traverse_br(node.children[sampled_action], player)
             }
-            _ => self.traverse_br(node.children[0], cfr_reach, player),
+            _ => self.traverse_br(node.children[0], player),
         }
     }
     /// CFR algorithm recursivly traverses game tree and applys regret-matching
@@ -403,7 +399,7 @@ impl<'a> SolverThread<'a> {
     /// * `cfr_reach` counterfactual reach probability
     /// * `player` index of player that is training
     /// * `prune` should we apply negative regret pruning
-    pub fn traverse(&mut self, node_idx: usize, cfr_reach: f64, player: u8, prune: bool) -> f64 {
+    pub fn traverse(&mut self, node_idx: usize, player: u8, prune: bool) -> f64 {
         let node = self.root.game_tree.get_node(node_idx);
         match &node.data {
             GameNode::Terminal {
@@ -454,15 +450,13 @@ impl<'a> SolverThread<'a> {
                             );
                             if child_is_terminal || regrets[a] > PRUNE_THRESHOLD {
                                 explored[a] = true;
-                                action_utils[a] =
-                                    self.traverse(node.children[a], cfr_reach, player, prune);
+                                action_utils[a] = self.traverse(node.children[a], player, prune);
                                 node_util += action_utils[a] * strategy[a];
                             }
                         }
                     } else {
                         for a in 0..n_actions {
-                            action_utils[a] =
-                                self.traverse(node.children[a], cfr_reach, player, prune);
+                            action_utils[a] = self.traverse(node.children[a], player, prune);
                             node_util += action_utils[a] * strategy[a];
                         }
                     }
@@ -484,22 +478,14 @@ impl<'a> SolverThread<'a> {
                 unsafe {
                     let strategy_sum = (&self.root.infosets[*index as usize].strategy_sum
                         [offset..offset + n_actions]
-                        as *const [i32]) as *mut [i32];
-                    (&mut *strategy_sum)[sampled_action] += 1;
-                    if (&mut *strategy_sum)[sampled_action] > 2000000000 {
-                        for i in 0..n_actions {
-                            (&mut *strategy_sum)[i] /= 2;
-                        }
+                        as *const [f64]) as *mut [f64];
+                    for i in 0..n_actions {
+                        (&mut *strategy_sum)[i] += strategy[i];
                     }
                 }
-                self.traverse(
-                    node.children[sampled_action],
-                    cfr_reach * strategy[sampled_action],
-                    player,
-                    prune,
-                )
+                self.traverse(node.children[sampled_action], player, prune)
             }
-            _ => self.traverse(node.children[0], cfr_reach, player, prune),
+            _ => self.traverse(node.children[0], player, prune),
         }
     }
 }
@@ -833,14 +819,14 @@ impl Solver {
         for action_index in 0..self.infosets.len() {
             file.seek(SeekFrom::Start(offset))?;
             let size = self.infosets[action_index].strategy_sum.len();
-            let mut buffer = vec![0; size * size_of::<i32>()];
+            let mut buffer = vec![0; size * size_of::<f64>()];
             file.read_exact(&mut buffer)?;
             unsafe {
                 self.infosets[action_index].strategy_sum =
-                    Vec::from_raw_parts(buffer.as_mut_ptr() as *mut i32, size, size);
+                    Vec::from_raw_parts(buffer.as_mut_ptr() as *mut f64, size, size);
                 forget(buffer);
             }
-            offset += (size * size_of::<i32>()) as u64;
+            offset += (size * size_of::<f64>()) as u64;
         }
         Ok(())
     }
