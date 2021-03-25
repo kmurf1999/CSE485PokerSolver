@@ -47,7 +47,6 @@ fn test_turn_convergence() {
         solver.save_regrets().unwrap();
         solver.save_strategy().unwrap();
         let mut new_ev = solver.run_br(10000000, 0);
-        solver.discount((i as f64 / (i as f64 + 1.0)));
         solver.load_regrets().unwrap();
         solver.load_strategy().unwrap();
         new_ev /= 10000000.0;
@@ -76,14 +75,15 @@ fn test_flop_convergence() {
         card_abstraction: vec!["null".to_string(), "emd".to_string(), "ochs".to_string()],
     };
     let mut solver = Solver::init(options).unwrap();
-    for _ in 0..50 {
-        let mut evs = solver.run(1_000_000_000);
+    for i in 1..50 {
+        let mut evs = solver.run(100_000_000);
         for ev in &mut evs {
-            *ev /= 1_000_000_000.0;
+            *ev /= 100_000_000.0;
         }
         solver.save_regrets().unwrap();
         solver.save_strategy().unwrap();
         let mut new_ev = solver.run_br(100_000_000, 0);
+        solver.discount((i as f64 / (i as f64 + 1.0)));
         solver.load_regrets().unwrap();
         solver.load_strategy().unwrap();
         new_ev /= 100_000_000.0;
