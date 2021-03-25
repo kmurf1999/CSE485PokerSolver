@@ -486,6 +486,11 @@ impl<'a> SolverThread<'a> {
                         [offset..offset + n_actions]
                         as *const [i32]) as *mut [i32];
                     (&mut *strategy_sum)[sampled_action] += 1;
+                    if (&mut *strategy_sum)[sampled_action] > 2000000000 {
+                        for i in 0..n_actions {
+                            (&mut *strategy_sum)[i] /= 2;
+                        }
+                    }
                 }
                 self.traverse(
                     node.children[sampled_action],
