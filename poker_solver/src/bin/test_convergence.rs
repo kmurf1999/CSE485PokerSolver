@@ -77,16 +77,16 @@ fn test_flop_convergence() {
     };
     let mut solver = Solver::init(options).unwrap();
     for _ in 0..50 {
-        let mut evs = solver.run(100_000_000);
+        let mut evs = solver.run(1_000_000_000);
         for ev in &mut evs {
-            *ev /= 100_000_000.0;
+            *ev /= 1_000_000_000.0;
         }
         solver.save_regrets().unwrap();
         solver.save_strategy().unwrap();
-        let mut new_ev = solver.run_br(10_000_000, 0);
+        let mut new_ev = solver.run_br(100_000_000, 0);
         solver.load_regrets().unwrap();
         solver.load_strategy().unwrap();
-        new_ev /= 10_000_000.0;
+        new_ev /= 100_000_000.0;
         // println!("start ev: {}, after ev: {}", evs[0], new_ev);
         println!("{:?},", new_ev - evs[0]);
     }
