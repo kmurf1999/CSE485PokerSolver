@@ -9,7 +9,7 @@ use websocket::client::ClientBuilder;
 use websocket::sync::Client;
 use websocket::{Message, OwnedMessage};
 
-const BASE_URI: &str = "http://localhost:3001";
+const BASE_URI: &str = "http://127.0.0.1:3001";
 
 async fn client_loop(client: Client<std::net::TcpStream>) {
     let mut rng = thread_rng();
@@ -52,18 +52,25 @@ async fn client_loop(client: Client<std::net::TcpStream>) {
             PokerEvent::RequestAction => {
                 let actions = hand_state.valid_actions();
                 let action = actions.choose(&mut rng).unwrap();
+                let current_stack = hand_state.current_player().stack();
                 match action {
                     Action::BET(amt) => {
+                        let min_bet = std::cmp::min(current_stack, 10);
+                        let bet_size = rng.gen_range(min_bet,current_stack+1);
+                        let action = Action::BET(bet_size);
                         sender
                             .send_message(&Message::from(OwnedMessage::from(
-                                json!(PokerEvent::SendAction { action: *action }).to_string(),
+                                json!(PokerEvent::SendAction { action: action }).to_string(),
                             )))
                             .unwrap();
                     }
                     Action::RAISE(amt) => {
+                        let min_raise = std::cmp::min(current_stack, hand_state.other_player().wager()*2);
+                        let raise_size = rng.gen_range(min_raise,current_stack+1);
+                        let action = Action::RAISE(raise_size);
                         sender
                             .send_message(&Message::from(OwnedMessage::from(
-                                json!(PokerEvent::SendAction { action: *action }).to_string(),
+                                json!(PokerEvent::SendAction { action: action }).to_string(),
                             )))
                             .unwrap();
                     }

@@ -24,9 +24,10 @@ pub enum PokerEvent {
     },
     /// Event sent to a single client when they need to make an action
     RequestAction,
-    /// Event send to the server from the client when the client takes an action
-    SendAction { action: Action },
-    /// Event sent to all clients when a client action has been confirmed
+    SendAction {
+        action: Action,
+
+    },
     AlertAction {
         action: Action,
         wagers: [u32; MAX_PLAYERS],
@@ -37,6 +38,8 @@ pub enum PokerEvent {
     HandEnd {
         pot: u32,
         stacks: [u32; MAX_PLAYERS],
+        player0_cards: Vec<u8>,
+        player1_cards: Vec<u8>,
     },
     /// Event send to client or clients when cards are dealt
     DealCards {

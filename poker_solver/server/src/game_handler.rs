@@ -9,9 +9,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::cmp::Ordering;
 use thiserror::Error;
+use tokio::time::sleep;
 use tokio::time::{timeout, Duration};
 use tracing::{debug, info, instrument};
 use warp::filters::ws::Message;
+use warp::header::value;
 use warp::reject::Reject;
 
 #[derive(Debug, Error, Serialize, Deserialize)]
@@ -146,8 +148,10 @@ impl GameRunner {
             pot: hand_state.pot(),
         })
         .await?;
+        sleep(Duration::from_millis(500)).await;
         // deal cards
         self.deal_cards(&mut hand_state).await?;
+        sleep(Duration::from_millis(500)).await;
         // loop until hand is finished
         while !hand_state.is_game_over() {
             // get action from player
@@ -170,6 +174,7 @@ impl GameRunner {
                 stacks: hand_state.stacks(),
             })
             .await?;
+            sleep(Duration::from_millis(500)).await;
             // check if round is over
             if hand_state.bets_settled() && !hand_state.is_game_over() {
                 // continue to next round
@@ -186,7 +191,7 @@ impl GameRunner {
 
         if let Some(player_fold) = hand_state.player_folded() {
             // player folded
-            stacks[usize::from(player_fold) - 1] += pot;
+            stacks[1 - usize::from(player_fold)] += pot;
         } else {
             // do showdown
             while hand_state.round() != BettingRound::RIVER {
@@ -214,15 +219,21 @@ impl GameRunner {
                     stacks[1] += pot / 2;
                 }
             }
+
         }
+
         self.stacks = stacks;
 
         // deal cards
         self.broadcast_msg(PokerEvent::HandEnd {
             stacks: self.stacks,
             pot,
+            player0_cards: hand_state.player(0).cards().to_vec(),
+            player1_cards: hand_state.player(1).cards().to_vec(),
         })
         .await?;
+        // wait for 5 seconds after hand ends
+        sleep(Duration::from_millis(5000)).await;
         Ok(())
     }
     /// send message to all connected clients
@@ -272,7 +283,8 @@ impl GameRunner {
                         if event.from != Some(self.client_ids[player_idx].clone()) {
                             continue;
                         }
-                        if let PokerEvent::SendAction { action } = event.event {
+                        if let PokerEvent::SendAction {action} = event.event {
+                        println!("{}", json!(PokerEvent::SendAction {action}));
                             if hand_state.is_action_valid(action) {
                                 return Ok(action);
                             }
