@@ -2,6 +2,7 @@
 ///
 /// Nodes are stored in a central arena
 /// and are used to iterate using node indices instead of pointers
+#[derive(Debug)]
 pub struct Tree<T> {
     nodes: Vec<Node<T>>,
 }
@@ -11,6 +12,7 @@ pub type NodeIndex = usize;
 /// Node object for the tree
 ///
 /// Children is a list of node indices instead of pointers
+#[derive(Debug)]
 pub struct Node<T> {
     pub data: T,
     pub parent: Option<NodeIndex>,
@@ -18,16 +20,19 @@ pub struct Node<T> {
 }
 
 impl<T> Node<T> {
+    /// adds a child node index into the children array of this node
     pub fn add_child(&mut self, node_idx: NodeIndex) {
         self.children.push(node_idx);
     }
 }
 
-impl<T> Tree<T> {
-    /// Create an empty tree
-    pub fn new() -> Tree<T> {
+impl<T> Default for Tree<T> {
+    fn default() -> Self {
         Tree { nodes: Vec::new() }
     }
+}
+
+impl<T> Tree<T> {
     /// Add a new node into the tree
     pub fn add_node(&mut self, parent: Option<NodeIndex>, data: T) -> NodeIndex {
         let next_index = self.nodes.len();
@@ -38,10 +43,12 @@ impl<T> Tree<T> {
         });
         next_index
     }
+    /// get a mutable reference to a node at index
     pub fn get_node_mut(&mut self, node_idx: NodeIndex) -> &mut Node<T> {
         assert!(node_idx < self.nodes.len());
         &mut self.nodes[node_idx]
     }
+    /// gets a reference to to a node at index
     pub fn get_node(&self, node_idx: NodeIndex) -> &Node<T> {
         assert!(node_idx < self.nodes.len());
         &self.nodes[node_idx]
@@ -49,6 +56,12 @@ impl<T> Tree<T> {
     /// Returns a preorder tree iterator
     pub fn iter(&self) -> TreeIter<T> {
         TreeIter::new(0, &self)
+    }
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.nodes.len() == 0
     }
 }
 
@@ -80,7 +93,7 @@ impl<'a, T> Iterator for TreeIter<'a, T> {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-// }
+#[cfg(test)]
+mod tests {
+    use super::*;
+}

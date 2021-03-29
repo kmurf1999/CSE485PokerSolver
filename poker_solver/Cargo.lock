@@ -1663,6 +1663,7 @@ dependencies = [
  "rust_poker",
  "serde",
  "serde_json",
+ "thiserror",
  "tokio 0.3.7",
  "tokio-util 0.5.1",
 ]

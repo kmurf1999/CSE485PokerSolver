@@ -1,107 +1,178 @@
 use crate::action::Action;
+use crate::constants::*;
 use crate::game_node::{GameNode, TerminalType};
 use crate::round::BettingRound;
 use crate::state::GameState;
 use crate::tree::Tree;
+use std::result::Result;
+use thiserror::Error;
 
+#[derive(Debug, Error)]
+pub enum TreeBuilderError {
+    #[error("too many players")]
+    TooManyPlayers,
+    #[error("too few players")]
+    TooFewPlayers,
+    #[error("invalid stacks")]
+    InvalidStacks,
+    #[error("invalid bet sizes")]
+    InvalidBetSizes,
+    #[error("invalid raise sizes")]
+    InvalidRaiseSizes,
+}
+
+/// Options that specify how to build the game tree
 pub struct TreeBuilderOptions {
     /// value of the blinds
+    /// [big blind, small blind]
     /// if this option is set, `pot` is ignored
-    pub blinds: Option<[u32; 2]>,
+    pub blinds: Option<Vec<u32>>,
     /// The initial stack size of each player
-    pub stacks: [u32; 2],
+    pub stacks: Vec<u32>,
     /// The initial pot size
-    pub pot: Option<u32>,
+    pub pot: u32,
     /// Initial betting round
-    /// if this option is not set, it defaults to `BettingRound::PREFLOP`
-    pub round: Option<BettingRound>,
+    pub round: BettingRound,
     /// bet sizes expressed as a fraction of the pot
-    pub bet_sizes: [Vec<f64>; 4],
+    /// An array of bet sizes for each player for each round
+    pub bet_sizes: Vec<Vec<Vec<f64>>>,
     /// raise sizes as expressed as a fraction of the pot
-    pub raise_sizes: [Vec<f64>; 4],
+    /// An array of raise sizes for each player for each round
+    pub raise_sizes: Vec<Vec<Vec<f64>>>,
 }
 
 /// A helper class to build a game tree
 /// starts from initial parameters set by using the `TreeBuilderOptions` struct
 pub struct TreeBuilder<'a> {
+    /// tree builder options
     options: &'a TreeBuilderOptions,
+    /// the game tree
     tree: Tree<GameNode>,
-    an_counts: [u32; 2],
+    /// number of action nodes in the game tree
+    action_node_count: u32,
 }
 
 impl<'a> TreeBuilder<'a> {
     /// Build a tree using initial options
     /// and return tree
-    pub fn build(options: &'a TreeBuilderOptions) -> Tree<GameNode> {
-        let mut builder = TreeBuilder {
-            tree: Tree::<GameNode>::new(),
-            options,
-            an_counts: [0; 2],
-        };
-        // create initial state
-        let initial_state = match options.blinds {
-            Some(blinds) => GameState::init_with_blinds(options.stacks, blinds, options.round),
-            None => {
-                let pot = options.pot.unwrap();
-                GameState::new(pot, options.stacks, options.round)
+    pub fn build(options: &'a TreeBuilderOptions) -> Result<Tree<GameNode>, TreeBuilderError> {
+        let player_count = options.stacks.len();
+        let blinds = options.blinds.clone();
+        let stacks = options.stacks.clone();
+        let pot = options.pot;
+        let round = options.round;
+        // how many rounds of play in this tree
+        let round_count = 4 - usize::from(round);
+
+        if player_count < MIN_PLAYERS {
+            return Err(TreeBuilderError::TooFewPlayers);
+        }
+        if player_count > MAX_PLAYERS {
+            return Err(TreeBuilderError::TooManyPlayers);
+        }
+        for stack in &stacks {
+            if *stack == 0 {
+                return Err(TreeBuilderError::InvalidStacks);
             }
+        }
+        if options.bet_sizes.len() != player_count {
+            return Err(TreeBuilderError::InvalidBetSizes);
+        }
+        for player_bet_sizes in &options.bet_sizes {
+            if player_bet_sizes.len() != round_count {
+                return Err(TreeBuilderError::InvalidBetSizes);
+            }
+            for bet_sizes in player_bet_sizes {
+                for bet_size in bet_sizes {
+                    if *bet_size <= 0.0 {
+                        return Err(TreeBuilderError::InvalidBetSizes);
+                    }
+                }
+            }
+        }
+        if options.raise_sizes.len() != player_count {
+            return Err(TreeBuilderError::InvalidRaiseSizes);
+        }
+        for player_raise_sizes in &options.raise_sizes {
+            if player_raise_sizes.len() != round_count {
+                return Err(TreeBuilderError::InvalidRaiseSizes);
+            }
+            for raise_sizes in player_raise_sizes {
+                for raise_size in raise_sizes {
+                    if *raise_size <= 0.0 {
+                        return Err(TreeBuilderError::InvalidRaiseSizes);
+                    }
+                }
+            }
+        }
+
+        let mut builder = TreeBuilder {
+            options,
+            tree: Tree::<GameNode>::default(),
+            action_node_count: 0,
         };
+
+        let initial_state = match &blinds {
+            Some(blinds) => GameState::init_with_blinds(stacks, blinds.to_vec(), Some(round)),
+            None => GameState::new(pot, stacks, Some(round)),
+        };
+        let initial_round = 0u8;
         // The root of the tree is always a private chance node
-        builder.build_private_chance(initial_state);
+        builder.build_private_chance(initial_state, initial_round);
         // return
-        builder.tree
+        Ok(builder.tree)
     }
-    /// Create private chance node and recursivily build tree
-    fn build_private_chance(&mut self, state: GameState) {
+    // Create private chance node and recursivily build tree
+    fn build_private_chance(&mut self, state: GameState, round: u8) {
         let root = self.tree.add_node(None, GameNode::PrivateChance);
-        let child = self.build_action_nodes(root, state);
+        let child = self.build_action_nodes(root, state, round);
         self.tree.get_node_mut(root).add_child(child);
     }
     /// Build action nodes recursivily and return index of action node
-    fn build_action_nodes(&mut self, parent: usize, state: GameState) -> usize {
+    fn build_action_nodes(&mut self, parent: usize, state: GameState, round: u8) -> usize {
         // TODO add actions and round index
+        let player = state.current_player_idx();
         let node = self.tree.add_node(
             Some(parent),
             GameNode::Action {
-                index: self.an_counts[usize::from(state.current_player_idx())],
-                player: state.current_player_idx(),
+                index: self.action_node_count,
+                round,
+                player,
                 actions: Vec::new(),
             },
         );
         // increment number of action nodes
-        self.an_counts[usize::from(state.current_player_idx())] += 1;
+        self.action_node_count += 1;
         // build each action
-        state.valid_actions().iter().for_each(|action| {
+        let valid_actions = state.valid_actions();
+        let pot = state.pot() as f64;
+        for action in valid_actions {
             if let Action::BET(_) = action {
                 // apply each bet size
-                self.options.bet_sizes[usize::from(state.round())]
-                    .iter()
-                    .for_each(|size| {
-                        let amt = (size * state.pot() as f64) as u32;
-                        let action_with_size = Action::BET(amt);
-                        if state.is_action_valid(action_with_size) {
-                            self.build_action(node, state, action_with_size);
-                        }
-                    });
+                for size in &self.options.bet_sizes[usize::from(player)][usize::from(round)] {
+                    let amt = (size * pot) as u32;
+                    let action_with_size = Action::BET(amt);
+                    if state.is_action_valid(action_with_size) {
+                        self.build_action(node, state, round, action_with_size);
+                    }
+                }
             } else if let Action::RAISE(_) = action {
                 // apply each raise size
-                self.options.raise_sizes[usize::from(state.round())]
-                    .iter()
-                    .for_each(|size| {
-                        let amt = (size * state.pot() as f64) as u32;
-                        let action_with_size = Action::RAISE(amt);
-                        if state.is_action_valid(action_with_size) {
-                            self.build_action(node, state, action_with_size);
-                        }
-                    });
+                for size in &self.options.raise_sizes[usize::from(player)][usize::from(round)] {
+                    let amt = (size * pot) as u32;
+                    let action_with_size = Action::RAISE(amt);
+                    if state.is_action_valid(action_with_size) {
+                        self.build_action(node, state, round, action_with_size);
+                    }
+                }
             } else {
-                self.build_action(node, state, *action);
+                self.build_action(node, state, round, action);
             }
-        });
+        }
         node
     }
     /// Build a single action node
-    fn build_action(&mut self, parent: usize, state: GameState, action: Action) {
+    fn build_action(&mut self, parent: usize, state: GameState, round: u8, action: Action) {
         let next_state = state.apply_action(action);
         let child;
         if next_state.bets_settled() {
@@ -110,10 +181,10 @@ impl<'a> TreeBuilder<'a> {
                 child = self.build_terminal(parent, next_state)
             } else {
                 // deal public chance
-                child = self.build_public_chance(parent, state.next_round());
+                child = self.build_public_chance(parent, state.next_round(), round);
             }
         } else {
-            child = self.build_action_nodes(parent, next_state);
+            child = self.build_action_nodes(parent, next_state, round);
         }
         // link new node to tree
         self.tree.get_node_mut(parent).add_child(child);
@@ -122,15 +193,16 @@ impl<'a> TreeBuilder<'a> {
             index: _,
             actions,
             player: _,
+            round: _,
         } = &mut self.tree.get_node_mut(parent).data
         {
             actions.push(action);
         }
     }
     /// Build a public chance node and return node index
-    fn build_public_chance(&mut self, parent: usize, state: GameState) -> usize {
+    fn build_public_chance(&mut self, parent: usize, state: GameState, round: u8) -> usize {
         let node = self.tree.add_node(Some(parent), GameNode::PublicChance);
-        let child = self.build_action_nodes(node, state);
+        let child = self.build_action_nodes(node, state, round + 1);
         self.tree.get_node_mut(node).add_child(child);
         node
     }
@@ -166,5 +238,30 @@ impl<'a> TreeBuilder<'a> {
             );
         }
         node
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build() {
+        let options = TreeBuilderOptions {
+            blinds: None,
+            stacks: vec![10000, 10000],
+            pot: 100,
+            round: BettingRound::FLOP,
+            bet_sizes: vec![
+                vec![vec![0.5], vec![0.5], vec![1.0]],
+                vec![vec![0.5], vec![0.5], vec![1.0]],
+            ],
+            raise_sizes: vec![
+                vec![vec![1.0], vec![1.0], vec![1.0]],
+                vec![vec![1.0], vec![1.0], vec![1.0]],
+            ],
+        };
+        let tree = TreeBuilder::build(&options).unwrap();
+        assert_eq!(tree.len(), 466);
     }
 }
