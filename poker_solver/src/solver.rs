@@ -313,82 +313,23 @@ impl<'a> SolverThread<'a> {
         }
         evs
     }
-    pub fn run_br(&mut self, max_iterations: usize, player: u8) -> f64 {
-        let mut ev = 0f64;
-        while self.root.iterations.fetch_add(1, atomic::Ordering::SeqCst) < max_iterations {
-            self.deal();
-            ev += self.traverse_br(0, player);
-        }
-        ev
-    }
-    /// CFR algorithm recursivly traverses game tree and applys regret-matching
-    ///
-    /// # Arguments
-    ///
-    /// * `node_idx` index of area-allocated tree node
-    /// * `cfr_reach` counterfactual reach probability
-    /// * `player` index of player that is training
-    pub fn traverse_br(&mut self, node_idx: usize, player: u8) -> f64 {
-        let node = self.root.game_tree.get_node(node_idx);
-        match &node.data {
-            GameNode::Terminal {
-                value,
-                ttype,
-                last_to_act,
-            } => {
-                if let TerminalType::Fold = ttype {
-                    if *last_to_act == player {
-                        -1.0 * (*value as f64)
-                    } else {
-                        *value as f64
-                    }
-                } else {
-                    if ((1u8 << player) & self.winner_mask) != 0 {
-                        return (*value as f64) / (self.winner_count as f64);
-                    }
-                    -1.0 * (*value as f64 / (self.winner_count as f64))
-                }
+    /// evaluates a terminal node and return its utility for player
+    /// losing player gets zero
+    /// winning player gets pot / winning player count
+    #[inline(always)]
+    fn eval_terminal(&self, player: u8, value: u32, ttype: TerminalType, last_to_act: u8) -> f64 {
+        let val = value as f64;
+        if let TerminalType::Fold = ttype {
+            if last_to_act == player {
+                0.0
+            } else {
+                val
             }
-            GameNode::Action {
-                round,
-                index,
-                player: node_player,
-                actions,
-            } => {
-                // if we are the player acting
-                let n_actions = actions.len();
-                let bucket = self.combo_buckets[usize::from(*node_player)][usize::from(*round)];
-                let offset = n_actions * bucket;
-                if *node_player == player {
-                    let strategy =
-                        self.root.infosets[*index as usize].current_strategy(bucket, n_actions);
-                    let mut node_util = 0f64;
-                    let mut action_utils = vec![0f64; n_actions];
-                    let mut explored = vec![false; n_actions];
-                    for a in 0..n_actions {
-                        action_utils[a] = self.traverse_br(node.children[a], player);
-                        node_util += action_utils[a] * strategy[a];
-                    }
-                    // update regrets
-                    unsafe {
-                        let regrets = (&self.root.infosets[*index as usize].regrets
-                            [offset..offset + n_actions]
-                            as *const [f64]) as *mut [f64];
-                        for a in 0..n_actions {
-                            (&mut *regrets)[a] += action_utils[a] - node_util;
-                        }
-                    }
-                    return node_util;
-                }
-                let strategy =
-                    self.root.infosets[*index as usize].cummulative_strategy(bucket, n_actions);
-                // let strategy =
-                // self.root.infosets[*index as usize].cummulative_strategy(bucket, n_actions);
-                let sampled_action = sample_pdf(&strategy, &mut self.rng);
-                // update cummulative strategy
-                self.traverse_br(node.children[sampled_action], player)
+        } else {
+            if ((1u8 << player) & self.winner_mask) != 0 {
+                return val / (self.winner_count as f64);
             }
-            _ => self.traverse_br(node.children[0], player),
+            0.0
         }
     }
     /// CFR algorithm recursivly traverses game tree and applys regret-matching
@@ -402,24 +343,13 @@ impl<'a> SolverThread<'a> {
     pub fn traverse(&mut self, node_idx: usize, player: u8, prune: bool) -> f64 {
         let node = self.root.game_tree.get_node(node_idx);
         match &node.data {
+            GameNode::PrivateChance => self.traverse(node.children[0], player, prune),
+            GameNode::PublicChance => self.traverse(node.children[0], player, prune),
             GameNode::Terminal {
                 value,
                 ttype,
                 last_to_act,
-            } => {
-                if let TerminalType::Fold = ttype {
-                    if *last_to_act == player {
-                        -1.0 * (*value as f64)
-                    } else {
-                        *value as f64
-                    }
-                } else {
-                    if ((1u8 << player) & self.winner_mask) != 0 {
-                        return (*value as f64) / (self.winner_count as f64);
-                    }
-                    -1.0 * (*value as f64 / (self.winner_count as f64))
-                }
-            }
+            } => self.eval_terminal(player, *value, *ttype, *last_to_act),
             GameNode::Action {
                 round,
                 index,
@@ -439,7 +369,9 @@ impl<'a> SolverThread<'a> {
                     if prune {
                         let regrets = &self.root.infosets[*index as usize].regrets
                             [offset..offset + n_actions];
+                        // calculate utils with prune
                         for a in 0..n_actions {
+                            // check if child node is terminal
                             let child_is_terminal = matches!(
                                 &self.root.game_tree.get_node(node.children[a]).data,
                                 GameNode::Terminal {
@@ -455,6 +387,7 @@ impl<'a> SolverThread<'a> {
                             }
                         }
                     } else {
+                        // calculate utils without prune
                         for a in 0..n_actions {
                             action_utils[a] = self.traverse(node.children[a], player, prune);
                             node_util += action_utils[a] * strategy[a];
@@ -485,7 +418,6 @@ impl<'a> SolverThread<'a> {
                 }
                 self.traverse(node.children[sampled_action], player, prune)
             }
-            _ => self.traverse(node.children[0], player, prune),
         }
     }
 }
@@ -699,7 +631,7 @@ impl Solver {
                     for regret in &mut *regrets {
                         *regret *= discount_factor;
                     }
-                    let ssums = (&self.infosets[*index as usize].strategy_sum as *const Vec<i32>)
+                    let ssums = (&self.infosets[*index as usize].strategy_sum as *const Vec<f64>)
                         as *mut Vec<i32>;
                     for ssum in &mut *ssums {
                         *ssum = (*ssum as f64 * discount_factor) as i32;
@@ -743,28 +675,6 @@ impl Solver {
         .unwrap();
 
         Arc::try_unwrap(total_evs).unwrap().into_inner().unwrap()
-    }
-    /// runs max_iterations of best response and returns that players ev
-    pub fn run_br(&self, max_iterations: usize, player: u8) -> f64 {
-        let arc_self = Arc::new(self);
-        let thread_count = 32;
-        let total_ev = Arc::new(Mutex::new(0f64));
-        self.iterations.store(0, atomic::Ordering::SeqCst);
-        crossbeam::scope(|scope| {
-            for _ in 0..thread_count {
-                let total_ev = total_ev.clone();
-                let arc_self = arc_self.clone();
-                scope.spawn(move |_| {
-                    let mut thread = SolverThread::init(arc_self);
-                    let thread_ev = thread.run_br(max_iterations, player);
-                    let mut total_ev = total_ev.lock().unwrap();
-                    *total_ev += thread_ev;
-                });
-            }
-        })
-        .unwrap();
-
-        Arc::try_unwrap(total_ev).unwrap().into_inner().unwrap()
     }
     /// save regrets to a file
     pub fn save_regrets(&self) -> Result<(), Error> {
@@ -983,30 +893,6 @@ mod tests {
         };
         let mut solver = Solver::init(options).unwrap();
         solver.run(100000);
-    }
-
-    #[test]
-    fn test_convergence() {
-        let options = SolverOptions {
-            board_mask: get_card_mask("QhJdTsAc"),
-            hand_ranges: vec!["random".to_string(), "random".to_string()],
-            stacks: vec![10000, 10000],
-            pot: 100,
-            bet_sizes: vec![vec![vec![0.5], vec![0.5]], vec![vec![0.5], vec![0.5]]],
-            raise_sizes: vec![vec![vec![1.0], vec![1.0]], vec![vec![1.0], vec![1.0]]],
-            card_abstraction: vec!["null".to_string(), "ochs".to_string()],
-        };
-        let mut solver = Solver::init(options).unwrap();
-        for i in 0..10 {
-            if i > 0 {
-                solver.load_regrets().unwrap();
-                solver.load_strategy().unwrap();
-            }
-            let evs = solver.run(1000000);
-            let new_ev = solver.run_br(1000000, 0).unwrap();
-            new_ev /= 10000.0;
-            println!("dEV {:?}", (new_ev - evs[0]).abs());
-        }
     }
 
     #[test]

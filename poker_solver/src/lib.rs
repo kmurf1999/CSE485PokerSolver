@@ -36,3 +36,5 @@ pub mod state;
 pub mod tree;
 /// Methods for building poker game trees
 pub mod tree_builder;
+
+pub mod infoset;

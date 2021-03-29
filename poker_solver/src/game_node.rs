@@ -3,7 +3,7 @@ use std::fmt;
 use crate::action::Action;
 
 /// The type of terminal node
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum TerminalType {
     /// Atleast one player has no chips left
     AllIn,
