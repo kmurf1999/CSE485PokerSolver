@@ -8,7 +8,7 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::result::Result;
 
 macro_rules! max {
@@ -49,17 +49,18 @@ fn regret_matching(regrets: &[f64]) -> Vec<f64> {
 #[inline(always)]
 pub fn sample_action_index<R: Rng>(strategy_profile: &[f64], rng: &mut R) -> usize {
     let mut sum = 0.0;
-    let rand = rng.gen_range(0.0, 1.0);
-    for (a, s) in strategy_profile.iter().enumerate() {
-        sum += *s;
-        if rand < sum {
-            return a;
+    let z = rng.gen_range(0.0, 1.0);
+    for (action_index, prob) in strategy_profile.iter().enumerate() {
+        if sum <= z && z < (sum + prob) {
+            return action_index;
         }
+        sum += prob;
     }
-    0
+    panic!("invalid normalized pdf");
 }
 /// Stores the regrets and cummulative strategy for an infoset
 /// An infoset is the set of states containing all-infomation known by the current acting player
+#[derive(Debug)]
 pub struct Infoset {
     pub cummulative_regrets: Vec<f64>,
     pub cummulative_strategy: Vec<f64>,
@@ -67,8 +68,9 @@ pub struct Infoset {
 
 /// Stores all infosets
 /// Maps serialized game states to information sets
+#[derive(Debug)]
 pub struct InfosetTable {
-    table: HashMap<String, Infoset>,
+    pub table: HashMap<String, Infoset>,
 }
 
 impl Infoset {
@@ -140,6 +142,9 @@ impl InfosetTable {
             Entry::Occupied(o) => o.into_mut(),
             Entry::Vacant(v) => v.insert(Infoset::init(n_actions)),
         }
+    }
+    pub fn get(&mut self, key: String) -> Option<&mut Infoset> {
+        self.table.get_mut(&key)
     }
     pub fn len(&self) -> usize {
         self.table.len()

@@ -6,10 +6,10 @@ use thiserror::Error;
 /// The Current Betting Round a Texas Holdem game is in
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub enum BettingRound {
-    PREFLOP,
-    FLOP,
-    TURN,
-    RIVER,
+    Preflop,
+    Flop,
+    Turn,
+    River,
 }
 
 #[derive(Debug, Error)]
@@ -21,10 +21,10 @@ pub enum BettingRoundError {
 impl fmt::Display for BettingRound {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let round_str = match self {
-            BettingRound::PREFLOP => "Preflop",
-            BettingRound::FLOP => "Flop",
-            BettingRound::TURN => "Turn",
-            BettingRound::RIVER => "River",
+            BettingRound::Preflop => "Preflop",
+            BettingRound::Flop => "Flop",
+            BettingRound::Turn => "Turn",
+            BettingRound::River => "River",
         };
         write!(f, "{}", round_str)
     }
@@ -34,10 +34,10 @@ impl TryFrom<usize> for BettingRound {
     type Error = BettingRoundError;
     fn try_from(round: usize) -> Result<BettingRound, BettingRoundError> {
         let br = match round {
-            0 => BettingRound::PREFLOP,
-            1 => BettingRound::FLOP,
-            2 => BettingRound::TURN,
-            3 => BettingRound::RIVER,
+            0 => BettingRound::Preflop,
+            1 => BettingRound::Flop,
+            2 => BettingRound::Turn,
+            3 => BettingRound::River,
             _ => return Err(BettingRoundError::OutOfBounds),
         };
         Ok(br)
@@ -47,10 +47,10 @@ impl TryFrom<usize> for BettingRound {
 impl From<BettingRound> for usize {
     fn from(round: BettingRound) -> Self {
         match round {
-            BettingRound::PREFLOP => 0,
-            BettingRound::FLOP => 1,
-            BettingRound::TURN => 2,
-            BettingRound::RIVER => 3,
+            BettingRound::Preflop => 0,
+            BettingRound::Flop => 1,
+            BettingRound::Turn => 2,
+            BettingRound::River => 3,
         }
     }
 }

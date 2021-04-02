@@ -15,6 +15,7 @@ pub const CARD_COUNT: u8 = 52;
 /// # Example
 ///
 /// ```
+/// use poker_solver::card::{cards_to_str, Card};
 /// let cards: [Card; 2] = [0, 1];
 /// println!("{}", cards_to_str(&cards));
 /// ```
@@ -38,6 +39,7 @@ pub fn cards_to_str(cards: &[Card]) -> String {
 /// # Example
 ///
 /// ```
+/// use poker_solver::card::{Card, score_hand};
 /// let board: [Card; 3] = [0, 1, 2];
 /// let private_cards: [Card; 2] = [3, 4];
 /// let score = score_hand(&board, &private_cards);

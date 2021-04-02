@@ -1,440 +1,85 @@
+use crate::action::{Action, CALL_IDX, CHECK_FOLD_IDX};
+use crate::betting_abstraction::BettingAbstraction;
+use crate::card::Card;
 use crate::card_abstraction::{CardAbstraction, CardAbstractionOptions};
-use crate::constants::*;
-use crate::game_node::{GameNode, TerminalType};
+// use crate::constants::*;
+use crate::combos::CardComboIter;
+use crate::infoset::{sample_action_index, InfosetTable};
+use crate::normalize;
 use crate::round::BettingRound;
-use crate::sparse_and_dense::{generate_buckets, SparseAndDense};
-use crate::tree::Tree;
-use crate::tree_builder::{TreeBuilder, TreeBuilderOptions};
-use rand::{
-    distributions::{Distribution, Uniform},
-    prelude::*,
-    rngs::SmallRng,
-    Rng,
-};
+use crate::state::GameState;
+use rand::{rngs::ThreadRng, thread_rng};
 use rust_poker::hand_evaluator::{evaluate, Hand, CARDS};
-use rust_poker::hand_range::{get_card_mask, HandRange};
-use rust_poker::read_write::VecIO;
+use rust_poker::hand_range::{Combo, HandRange};
 use rust_poker::HandIndexer;
-use std::cmp::Ordering;
 use std::convert::TryFrom;
-use std::fs::{File, OpenOptions};
-use std::io;
-use std::io::prelude::*;
-use std::io::SeekFrom;
-use std::iter::FromIterator;
-use std::mem::{forget, size_of};
 use std::result::Result;
-use std::sync::atomic::{self, AtomicUsize};
-use std::sync::{Arc, Mutex};
 use thiserror::Error as ThisError;
 
 type Error = Box<dyn std::error::Error>;
 
-const PRUNE_THRESHOLD: f64 = -300_000_000.0;
+// const PRUNE_THRESHOLD: f64 = -300_000_000.0;
 // const STRATEGY_INTERVAL: usize = 10_000;
-const DISCOUNT_INTERVAL: usize = 10_000_000;
+// const DISCOUNT_INTERVAL: usize = 10_000_000;
 
 #[derive(Debug, ThisError)]
 pub enum SolverError {
-    #[error("too many players")]
-    TooManyPlayers,
-    #[error("not enough players")]
-    TooFewPlayers,
-    #[error("invalid board mask")]
+    #[error("invalid board")]
     InvalidBoard,
-    #[error("array sizes don't match")]
-    PlayerCountMismatch,
-    #[error("invalid number of rounds in bet sizes")]
-    InvalidBetSizes,
-    #[error("invalid number of rounds in raise sizes")]
-    InvalidRaiseSizes,
-    #[error("pot must be greater than zero")]
-    InvalidPotSize,
-    #[error("invalid abstraction")]
+    #[error("invalid hand range")]
+    InvalidHandRange,
+    #[error("invalid card abstraction")]
     InvalidCardAbstraction,
-}
-
-#[derive(Debug)]
-pub struct Infoset {
-    pub regrets: Vec<f64>,
-    pub strategy_sum: Vec<f64>,
-}
-
-#[inline(always)]
-fn sample_pdf<R: Rng>(pdf: &Vec<f64>, rng: &mut R) -> usize {
-    let rand = rng.gen_range(0.0, 1.0);
-    let mut s = 0.0;
-    for i in 0..pdf.len() {
-        s += pdf[i];
-        if rand < s {
-            return i;
-        }
-    }
-    pdf.len() - 1
-}
-
-impl Default for Infoset {
-    fn default() -> Infoset {
-        Infoset {
-            regrets: Vec::new(),
-            strategy_sum: Vec::new(),
-        }
-    }
-}
-
-impl Infoset {
-    pub fn init(n_actions: usize, n_buckets: usize) -> Self {
-        Infoset {
-            regrets: vec![0f64; n_actions * n_buckets],
-            strategy_sum: vec![0f64; n_actions * n_buckets],
-        }
-    }
-    // get current strategy through regret-matching
-    pub fn current_strategy(&self, bucket: usize, n_actions: usize) -> Vec<f64> {
-        let offset = bucket * n_actions;
-        let regrets = &self.regrets[offset..offset + n_actions];
-        let mut strategy = vec![0f64; n_actions];
-        let mut norm_sum = 0f64;
-        for a in 0..n_actions {
-            strategy[a] = if regrets[a] > 0.0 { regrets[a] } else { 0.0 };
-            norm_sum += strategy[a];
-        }
-        for a in 0..n_actions {
-            if norm_sum > 0.0 {
-                strategy[a] /= norm_sum;
-            } else {
-                strategy[a] = 1.0 / n_actions as f64;
-            }
-        }
-        strategy
-    }
-    // get current strategy through regret-matching
-    pub fn cummulative_strategy(&self, bucket: usize, n_actions: usize) -> Vec<f64> {
-        let offset = bucket * n_actions;
-        let strategy_sum = &self.strategy_sum[offset..offset + n_actions];
-        let mut strategy = vec![0f64; n_actions];
-        let mut norm_sum = 0f64;
-        for a in 0..n_actions {
-            strategy[a] = if strategy_sum[a] > 0.0 {
-                strategy_sum[a]
-            } else {
-                0.0
-            };
-            norm_sum += strategy[a];
-        }
-        for a in 0..n_actions {
-            if norm_sum > 0.0 {
-                strategy[a] /= norm_sum;
-            } else {
-                strategy[a] = 1.0 / n_actions as f64;
-            }
-        }
-        strategy
-    }
 }
 
 /// options for running a postflop solver simulation
 #[derive(Debug)]
 pub struct SolverOptions {
-    /// initial board mask
-    pub board_mask: u64,
+    /// initial state of the game
+    pub initial_state: GameState,
     /// hand range for each player
-    pub hand_ranges: Vec<String>,
-    /// initial stack sizes
-    pub stacks: Vec<u32>,
-    /// initial pot size
-    pub pot: u32,
-    /// array of bet sizes for each player for each round
-    pub bet_sizes: Vec<Vec<Vec<f64>>>,
-    /// array of raise sizes for each player for each round
-    pub raise_sizes: Vec<Vec<Vec<f64>>>,
+    pub hand_ranges: [String; 2],
+    /// A betting abstraction for each player
+    pub betting_abstraction: BettingAbstraction,
     /// an abstraction for every round
     pub card_abstraction: Vec<String>,
 }
 
-impl ToString for SolverOptions {
-    fn to_string(&self) -> String {
-        let s = format!(
-            "b{}-hr{:?}-st{:?}-p{}-bs{:?}-rs{:?}-ca{:?}",
-            self.board_mask,
-            self.hand_ranges,
-            self.stacks,
-            self.pot,
-            self.bet_sizes,
-            self.raise_sizes,
-            self.card_abstraction
-        );
-        s.replace(&[' ', '\"'][..], "")
-    }
-}
-
 #[derive(Debug)]
 pub struct Solver {
-    options_string: String,
-    /// game tree including all chance, private, and action nodes
-    game_tree: Tree<GameNode>,
-    /// initial board as 64 bit mask
-    initial_board: u64,
-    /// hand range for each players
+    /// A hand range for each player
     hand_ranges: Vec<HandRange>,
-    /// a card abstraction for each round
+    /// The initial game state of the game
+    initial_state: GameState,
+    /// An table of information sets for storing regrets and strategys
+    pub infosets: InfosetTable,
+    /// Restricts avaible bet and raise sizes
+    betting_abstraction: BettingAbstraction,
+    /// Used to map hand idx -> bucket idx
+    /// One for each round
     card_abstraction: Vec<CardAbstraction>,
-    /// buckets for each player for each round
-    buckets: Vec<Vec<SparseAndDense>>,
-    /// infoset for each action node index for each bucket
-    /// plans to break them up by player and round in the future
-    infosets: Vec<Infoset>,
-    /// number of players
-    n_players: usize,
-    /// hand indexer for each round
+    /// Hand indexers
+    /// One for each round
     hand_indexers: [HandIndexer; 4],
-    /// initial round
-    start_round: BettingRound,
-    /// number of betting rounds in this tree
-    num_rounds: usize,
-    /// distribution for each hand range
-    /// used for sampling
-    combo_dists: Vec<Uniform<usize>>,
-    iterations: AtomicUsize,
-}
-
-pub struct SolverThread<'a> {
-    root: Arc<&'a Solver>,
-    rng: SmallRng,
-    /// sampled combo index for this hand
-    combo_idxs: Vec<usize>,
-    /// sampled combo bucket for each player for each round
-    combo_buckets: Vec<Vec<usize>>,
-    /// score of each hand
-    hand_scores: Vec<u16>,
-    winner_mask: u8,
-    winner_count: u8,
-}
-
-impl<'a> SolverThread<'a> {
-    pub fn init(root: Arc<&'a Solver>) -> Self {
-        let n_players = root.n_players;
-        let n_rounds = root.num_rounds;
-        SolverThread {
-            root,
-            rng: SmallRng::from_entropy(),
-            combo_idxs: vec![0; n_players],
-            combo_buckets: vec![vec![0; n_rounds]; n_players],
-            hand_scores: vec![0; n_players],
-            winner_mask: 0,
-            winner_count: 0,
-        }
-    }
-    /// deal a hand and get player reach indexes, winning player, and buckets
-    pub fn deal(&mut self) {
-        // select a hole card pair
-        let mut used_card_mask = self.root.initial_board;
-        for (player, hr) in self.root.hand_ranges.iter().enumerate() {
-            loop {
-                let combo_idx = self.root.combo_dists[player].sample(&mut self.rng);
-                let combo_mask = (1u64 << hr.hands[combo_idx].0) | (1u64 << hr.hands[combo_idx].1);
-                if (combo_mask & used_card_mask) == 0 {
-                    self.combo_idxs[player] = combo_idx;
-                    used_card_mask |= combo_mask;
-                    break;
-                }
-            }
-        }
-        // copy board cards
-        let mut cards = [52u8; 7];
-        let mut i = 2;
-        for j in 0..CARD_COUNT {
-            if (self.root.initial_board & (1u64 << j)) != 0 {
-                cards[i] = j;
-                i += 1;
-            }
-        }
-        // generate remaining board cards
-        for j in i..7 {
-            loop {
-                let c = self.rng.gen_range(0, CARD_COUNT);
-                if ((1u64 << c) & used_card_mask) == 0 {
-                    cards[j] = c;
-                    used_card_mask |= 1u64 << c;
-                    break;
-                }
-            }
-        }
-        // score each hands
-        let mut board: Hand = Hand::default();
-        for c in &cards[2..7] {
-            board += CARDS[usize::from(*c)];
-        }
-        // generate combo buckes and score hands
-        for player in 0..self.root.n_players {
-            let hole_cards = &self.root.hand_ranges[player].hands[self.combo_idxs[player]];
-            cards[0] = hole_cards.0;
-            cards[1] = hole_cards.1;
-            let hand = board + CARDS[usize::from(cards[0])] + CARDS[usize::from(cards[1])];
-            self.hand_scores[player] = evaluate(&hand);
-            for round in 0..self.root.num_rounds {
-                let cannon_idx = self.root.hand_indexers[usize::from(self.root.start_round) + round]
-                    .get_index(&cards) as usize;
-                let bucket_idx = self.root.card_abstraction[round].get(cannon_idx) as usize;
-                let dense_idx = self.root.buckets[player][round]
-                    .sparse_to_dense(bucket_idx)
-                    .unwrap();
-                self.combo_buckets[player][round] = dense_idx;
-            }
-        }
-        self.winner_mask = 0u8;
-        self.winner_count = 0u8;
-        let mut high_score = 0u16;
-        for i in 0..self.root.n_players {
-            match self.hand_scores[i].cmp(&high_score) {
-                Ordering::Greater => {
-                    self.winner_mask = 1u8 << i;
-                    self.winner_count = 1;
-                    high_score = self.hand_scores[i];
-                }
-                Ordering::Equal => {
-                    self.winner_mask |= 1u8 << i;
-                    self.winner_count += 1;
-                }
-                _ => {}
-            }
-        }
-    }
-    pub fn run(&mut self, max_iterations: usize) -> Vec<f64> {
-        let mut evs = vec![0f64; self.root.n_players];
-        while self.root.iterations.fetch_add(1, atomic::Ordering::SeqCst) < max_iterations {
-            self.deal();
-            let prune = self.rng.gen_range(0.0, 1.0) < 0.05;
-            for player in 0..self.root.n_players {
-                // TODO discount
-                // TODO calculate actual initial reach prob
-                evs[player] += self.traverse(0, player as u8, prune);
-            }
-        }
-        evs
-    }
-    /// evaluates a terminal node and return its utility for player
-    /// losing player gets zero
-    /// winning player gets pot / winning player count
-    #[inline(always)]
-    fn eval_terminal(&self, player: u8, value: u32, ttype: TerminalType, last_to_act: u8) -> f64 {
-        let val = value as f64;
-        if let TerminalType::Fold = ttype {
-            if last_to_act == player {
-                0.0
-            } else {
-                val
-            }
-        } else {
-            if ((1u8 << player) & self.winner_mask) != 0 {
-                return val / (self.winner_count as f64);
-            }
-            0.0
-        }
-    }
-    /// CFR algorithm recursivly traverses game tree and applys regret-matching
-    ///
-    /// # Arguments
-    ///
-    /// * `node_idx` index of area-allocated tree node
-    /// * `cfr_reach` counterfactual reach probability
-    /// * `player` index of player that is training
-    /// * `prune` should we apply negative regret pruning
-    pub fn traverse(&mut self, node_idx: usize, player: u8, prune: bool) -> f64 {
-        let node = self.root.game_tree.get_node(node_idx);
-        match &node.data {
-            GameNode::PrivateChance => self.traverse(node.children[0], player, prune),
-            GameNode::PublicChance => self.traverse(node.children[0], player, prune),
-            GameNode::Terminal {
-                value,
-                ttype,
-                last_to_act,
-            } => self.eval_terminal(player, *value, *ttype, *last_to_act),
-            GameNode::Action {
-                round,
-                index,
-                player: node_player,
-                actions,
-            } => {
-                // if we are the player acting
-                let n_actions = actions.len();
-                let bucket = self.combo_buckets[usize::from(*node_player)][usize::from(*round)];
-                let offset = n_actions * bucket;
-                let strategy =
-                    self.root.infosets[*index as usize].current_strategy(bucket, n_actions);
-                if *node_player == player {
-                    let mut node_util = 0f64;
-                    let mut action_utils = vec![0f64; n_actions];
-                    let mut explored = vec![false; n_actions];
-                    if prune {
-                        let regrets = &self.root.infosets[*index as usize].regrets
-                            [offset..offset + n_actions];
-                        // calculate utils with prune
-                        for a in 0..n_actions {
-                            // check if child node is terminal
-                            let child_is_terminal = matches!(
-                                &self.root.game_tree.get_node(node.children[a]).data,
-                                GameNode::Terminal {
-                                    last_to_act: _,
-                                    value: _,
-                                    ttype: _
-                                }
-                            );
-                            if child_is_terminal || regrets[a] > PRUNE_THRESHOLD {
-                                explored[a] = true;
-                                action_utils[a] = self.traverse(node.children[a], player, prune);
-                                node_util += action_utils[a] * strategy[a];
-                            }
-                        }
-                    } else {
-                        // calculate utils without prune
-                        for a in 0..n_actions {
-                            action_utils[a] = self.traverse(node.children[a], player, prune);
-                            node_util += action_utils[a] * strategy[a];
-                        }
-                    }
-                    // update regrets
-                    unsafe {
-                        let regrets = (&self.root.infosets[*index as usize].regrets
-                            [offset..offset + n_actions]
-                            as *const [f64]) as *mut [f64];
-                        for a in 0..n_actions {
-                            if !prune || explored[a] {
-                                (&mut *regrets)[a] += action_utils[a] - node_util;
-                            }
-                        }
-                    }
-                    return node_util;
-                }
-                let sampled_action = sample_pdf(&strategy, &mut self.rng);
-                // update cummulative strategy
-                unsafe {
-                    let strategy_sum = (&self.root.infosets[*index as usize].strategy_sum
-                        [offset..offset + n_actions]
-                        as *const [f64]) as *mut [f64];
-                    for i in 0..n_actions {
-                        (&mut *strategy_sum)[i] += strategy[i];
-                    }
-                }
-                self.traverse(node.children[sampled_action], player, prune)
-            }
-        }
-    }
+    /// An rng used for sampling actions
+    rng: ThreadRng,
 }
 
 impl Solver {
-    /// initialize a heads up postflop solver using these options
+    /// Initialize a solver
     pub fn init(options: SolverOptions) -> Result<Solver, Error> {
-        // used for filenames
-        let options_string = options.to_string();
-        // check if initial board is valid
-        // must be between 3 and 5 cards
-        let num_board_cards = options.board_mask.count_ones();
-        if options.board_mask >= (1u64 << CARD_COUNT) {
-            return Err(SolverError::InvalidBoard.into());
+        let board = options.initial_state.board();
+        let mut board_card_count = 0;
+        let mut board_mask = 0u64;
+        for card in board {
+            if *card >= 52 {
+                break;
+            }
+            board_mask |= 1u64 << *card;
+            board_card_count += 1;
         }
-        // number of betting rounds in this tree
-        let num_rounds = match num_board_cards {
+        let num_rounds = match board_card_count {
+            0 => 4,
             3 => 3,
             4 => 2,
             5 => 1,
@@ -442,588 +87,401 @@ impl Solver {
                 return Err(SolverError::InvalidBoard.into());
             }
         };
-        let start_round = match num_board_cards {
-            3 => BettingRound::FLOP,
-            4 => BettingRound::TURN,
-            5 => BettingRound::RIVER,
-            _ => {
-                return Err(SolverError::InvalidBoard.into());
-            }
-        };
-
-        // check if player count is valid
-        let n_players = options.hand_ranges.len();
-        if n_players < MIN_PLAYERS {
-            return Err(SolverError::TooFewPlayers.into());
-        }
-        if n_players > MAX_PLAYERS {
-            return Err(SolverError::TooManyPlayers.into());
-        }
-        // check if all argument sizes match
-        if options.stacks.len() != n_players {
-            return Err(SolverError::PlayerCountMismatch.into());
-        }
-        if options.bet_sizes.len() != n_players {
-            return Err(SolverError::PlayerCountMismatch.into());
-        }
-        if options.raise_sizes.len() != n_players {
-            return Err(SolverError::PlayerCountMismatch.into());
-        }
-        if options.pot == 0 {
-            return Err(SolverError::InvalidPotSize.into());
-        }
-        // check bet sizes
-        for player_bet_sizes in &options.bet_sizes {
-            if player_bet_sizes.len() != num_rounds {
-                return Err(SolverError::InvalidBetSizes.into());
-            }
-            for round_bet_sizes in player_bet_sizes {
-                for bet_size in round_bet_sizes {
-                    if *bet_size < 0.0 {
-                        return Err(SolverError::InvalidBetSizes.into());
-                    }
-                }
-            }
-        }
-        // check raise sizes
-        for player_raise_sizes in &options.raise_sizes {
-            if player_raise_sizes.len() != num_rounds {
-                return Err(SolverError::InvalidRaiseSizes.into());
-            }
-            for round_raise_sizes in player_raise_sizes {
-                for raise_size in round_raise_sizes {
-                    if *raise_size < 0.0 {
-                        return Err(SolverError::InvalidBetSizes.into());
-                    }
-                }
-            }
-        }
-        // remove conflicting combos
-        let mut hand_ranges: Vec<HandRange> = options
-            .hand_ranges
-            .iter()
-            .map(|rs| HandRange::from_string(rs.to_string()))
-            .collect();
+        let start_round = 4 - num_rounds;
+        let mut hand_ranges = HandRange::from_strings(options.hand_ranges.to_vec());
         for hr in &mut hand_ranges {
-            hr.remove_conflicting_combos(options.board_mask);
+            hr.remove_conflicting_combos(board_mask);
+            if hr.hands.is_empty() {
+                return Err(SolverError::InvalidHandRange.into());
+            }
         }
-        // load card abstraction
         if options.card_abstraction.len() != num_rounds {
             return Err(SolverError::InvalidCardAbstraction.into());
         }
-        let card_abstraction: Result<Vec<CardAbstraction>, Error> = options
-            .card_abstraction
+        let mut card_abstraction = Vec::new();
+        for round in 0..num_rounds {
+            let r = match BettingRound::try_from(start_round + round) {
+                Ok(r) => r,
+                Err(e) => {
+                    return Err(e.into());
+                }
+            };
+            let ca_opts = CardAbstractionOptions {
+                round: r,
+                abs_type: options.card_abstraction[round].to_string(),
+                k: 5000,
+                d: if options.card_abstraction[round] == "emd" {
+                    50
+                } else {
+                    8
+                },
+            };
+            card_abstraction.push(CardAbstraction::load(ca_opts)?);
+        }
+        let hand_indexers = [
+            HandIndexer::init(1, [2].to_vec()),
+            HandIndexer::init(2, [2, 3].to_vec()),
+            HandIndexer::init(2, [2, 4].to_vec()),
+            HandIndexer::init(2, [2, 5].to_vec()),
+        ];
+        Ok(Solver {
+            hand_ranges,
+            initial_state: options.initial_state,
+            infosets: InfosetTable::default(),
+            betting_abstraction: options.betting_abstraction,
+            hand_indexers,
+            card_abstraction,
+            rng: thread_rng(),
+        })
+    }
+    /// Run MCCFR for `iterations` iterations
+    /// returns the average equity/iter for each player
+    pub fn run(&mut self, iterations: usize) -> [f64; 2] {
+        let mut equity = [0f64; 2];
+        for i in 0..iterations {
+            for player in 0..2 {
+                equity[usize::from(player)] += self.traverse(self.initial_state.clone(), player);
+            }
+        }
+        for eq in &mut equity {
+            *eq /= iterations as f64;
+        }
+        equity
+    }
+    pub fn run_br(&mut self, iterations: usize, br_player: u8) -> f64 {
+        let mut equity = 0f64;
+        let mut beliefs = vec![0f64; self.hand_ranges[usize::from(1 - br_player)].hands.len()];
+        for (i, combo) in self.hand_ranges[usize::from(1 - br_player)]
+            .hands
             .iter()
             .enumerate()
-            .map(|(i, abs_string)| {
-                let r = BettingRound::try_from(usize::from(start_round) + i)?;
-                let ca_opts = CardAbstractionOptions {
-                    k: 5000,
-                    d: if r == BettingRound::RIVER { 8 } else { 50 },
-                    round: r,
-                    abs_type: abs_string.to_string(),
-                };
-                CardAbstraction::load(ca_opts)
-            })
-            .collect();
-
-        let card_abstraction = match card_abstraction {
-            Ok(ca) => ca,
-            Err(e) => {
-                return Err(e);
-            }
-        };
-
-        let mut buckets: Vec<Vec<SparseAndDense>> = vec![vec![]];
-        for player in 0..n_players {
-            buckets.push(Vec::new());
-            for round in 0..num_rounds {
-                let br = BettingRound::try_from(usize::from(start_round) + round)?;
-                let b = generate_buckets(
-                    &hand_ranges[player],
-                    &card_abstraction[round],
-                    br,
-                    options.board_mask,
-                );
-                buckets[player].push(b);
-            }
+        {
+            beliefs[i] = (combo.2 as f64) / 100f64;
         }
-
-        let tree_options = TreeBuilderOptions {
-            blinds: None,
-            stacks: options.stacks,
-            pot: options.pot,
-            round: start_round,
-            bet_sizes: options.bet_sizes,
-            raise_sizes: options.raise_sizes,
-        };
-        let game_tree = TreeBuilder::build(&tree_options)?;
-
-        // initialize infosets
-        let mut infosets: Vec<Infoset> = Vec::new();
-        for node in game_tree.iter() {
-            if let GameNode::Action {
-                actions,
-                index,
-                round,
-                player,
-            } = &node.data
-            {
-                let index = *index as usize;
-                if infosets.len() <= index {
-                    infosets.resize_with(index + 1, Default::default);
-                }
-                let n_buckets = buckets[usize::from(*player)][usize::from(*round)].len();
-                let n_actions = actions.len();
-
-                infosets[index] = Infoset::init(n_actions, n_buckets);
-            }
+        for _ in 0..iterations {
+            equity += self.traverse_br(
+                self.initial_state.clone(),
+                &mut beliefs.to_owned(),
+                br_player,
+            );
         }
-        // create hand indexers
-        let hand_indexers = [
-            HandIndexer::init(1, vec![2]),
-            HandIndexer::init(2, vec![2, 3]),
-            HandIndexer::init(2, vec![2, 4]),
-            HandIndexer::init(2, vec![2, 5]),
-        ];
-        // create combo buckets
-        let combo_buckets = vec![vec![0; num_rounds]; n_players];
-        // create hand scores
-        let hand_scores = vec![0; n_players];
-        // create combo idxs
-        let combo_idxs = vec![0usize; n_players];
-        // create combo distributions for sampling
-        let combo_dists = hand_ranges
-            .iter()
-            .map(|hr| Uniform::from(0..hr.hands.len()))
-            .collect();
-
-        let solver = Solver {
-            options_string,
-            game_tree,
-            initial_board: options.board_mask,
-            card_abstraction,
-            buckets,
-            hand_ranges,
-            infosets,
-            n_players,
-            hand_indexers,
-            start_round,
-            num_rounds,
-            combo_dists,
-            iterations: AtomicUsize::new(0),
-        };
-        Ok(solver)
+        equity /= iterations as f64;
+        equity
     }
+    /// MCCFR implementation
+    fn traverse(&mut self, node: GameState, player: u8) -> f64 {
+        // return the reward for this player
+        if node.is_terminal() {
+            return node.player_reward(usize::from(player));
+        }
+        // sample a single chance outcome
+        if node.is_chance() {
+            let action: Action;
+            if node.is_initial_state() {
+                action = node.sample_private_chance_from_ranges(&mut self.rng, &self.hand_ranges);
+            } else {
+                action = node.sample_public_chance(&mut self.rng);
+            }
+            return self.traverse(node.apply_action(action), player);
+        }
+        let legal_actions = node.valid_actions(&self.betting_abstraction);
+        let action_count = legal_actions.len();
+        let mut cards: [Card; 7] = [52; 7];
+        cards[..2].clone_from_slice(&node.player(usize::from(player)).cards()[..]);
+        cards[2..(5 + 2)].clone_from_slice(&node.board()[..5]);
+        // TODO fix this in the future to actaully use card abstraction
+        let hand_bucket = self.hand_indexers[usize::from(node.round())].get_index(&cards);
+        let is_key = format!("{}{}", hand_bucket, node.history_string());
+        let current_strategy = self
+            .infosets
+            .get_or_insert(is_key.clone(), action_count)
+            .current_strategy();
+        let mut node_util = 0f64;
+        let mut child_utils = Vec::new();
+        if node.current_player() == player as i8 {
+            for a_idx in 0..action_count {
+                child_utils.push(self.traverse(node.apply_action(legal_actions[a_idx]), player));
+                node_util += current_strategy[a_idx] * child_utils[a_idx];
+            }
+        } else {
+            let a_idx = sample_action_index(&current_strategy, &mut self.rng);
+            node_util += self.traverse(node.apply_action(legal_actions[a_idx]), player);
+        }
 
-    pub fn discount(&self, discount_factor: f64) {
-        for node in self.game_tree.iter() {
-            if let GameNode::Action {
-                index,
-                player: _,
-                actions: _,
-                round: _,
-            } = &node.data
-            {
-                unsafe {
-                    let regrets = (&self.infosets[*index as usize].regrets as *const Vec<f64>)
-                        as *mut Vec<f64>;
-                    for regret in &mut *regrets {
-                        *regret *= discount_factor;
-                    }
-                    let ssums = (&self.infosets[*index as usize].strategy_sum as *const Vec<f64>)
-                        as *mut Vec<i32>;
-                    for ssum in &mut *ssums {
-                        *ssum = (*ssum as f64 * discount_factor) as i32;
+        let infoset = self.infosets.get_or_insert(is_key, action_count);
+        if node.current_player() == player as i8 {
+            // update regrets
+            for a_idx in 0..action_count {
+                infoset.cummulative_regrets[a_idx] += child_utils[a_idx] - node_util;
+            }
+        } else {
+        } // update avg strategy
+        for a_idx in 0..action_count {
+            infoset.cummulative_strategy[a_idx] += current_strategy[a_idx];
+        }
+        node_util
+    }
+    fn traverse_br(&mut self, node: GameState, beliefs: &mut Vec<f64>, br_player: u8) -> f64 {
+        // return the reward for this player
+        if node.is_terminal() {
+            return node.player_reward(usize::from(br_player));
+        }
+        // sample a single chance outcome
+        if node.is_chance() {
+            let action: Action;
+            if node.is_initial_state() {
+                action = node.sample_private_chance_from_ranges(&mut self.rng, &self.hand_ranges);
+                // update beliefs
+                if let Action::Chance(cards) = action {
+                    let our_card_mask = (1u64 << cards[usize::from(2 * br_player)])
+                        | (1u64 << cards[usize::from(2 * br_player + 1)]);
+                    for (i, combo) in self.hand_ranges[usize::from(1 - br_player)]
+                        .hands
+                        .iter()
+                        .enumerate()
+                    {
+                        if beliefs[i] == 0f64 {
+                            continue;
+                        }
+                        let combo_mask = (1u64 << combo.0) | (1u64 << combo.1);
+                        if (our_card_mask & combo_mask) != 0 {
+                            beliefs[i] = 0f64;
+                        }
                     }
                 }
-            }
-        }
-    }
-    /// Run cfr for max_iters
-    /// return evs for each player
-    pub fn run(&self, iterations: usize) -> Vec<f64> {
-        let arc_self = Arc::new(self);
-        let thread_count = 32;
-        let total_evs = Arc::new(Mutex::new(vec![0f64; self.n_players]));
-        let max_iterations = self.iterations.load(atomic::Ordering::SeqCst) + iterations;
-        crossbeam::scope(|scope| {
-            for _ in 0..thread_count {
-                let arc_self = arc_self.clone();
-                let total_evs = total_evs.clone();
-                scope.spawn(move |_| {
-                    let mut thread = SolverThread::init(arc_self);
-                    let thread_evs = thread.run(max_iterations);
-                    let mut total_evs = total_evs.lock().unwrap();
-                    for i in 0..thread_evs.len() {
-                        total_evs[i] += thread_evs[i];
+            } else {
+                action = node.sample_public_chance(&mut self.rng);
+                // update beliefs
+                if let Action::Chance(cards) = action {
+                    let mut board_mask = 0u64;
+                    for card in &cards {
+                        if *card >= 52 {
+                            break;
+                        }
+                        board_mask |= 1u64 << *card;
                     }
-                });
+                    for card in node.board() {
+                        if *card >= 52 {
+                            break;
+                        }
+                        board_mask |= 1u64 << *card;
+                    }
+                    for (i, combo) in self.hand_ranges[usize::from(1 - br_player)]
+                        .hands
+                        .iter()
+                        .enumerate()
+                    {
+                        if beliefs[i] == 0f64 {
+                            continue;
+                        }
+                        let combo_mask = (1u64 << combo.0) | (1u64 << combo.1);
+                        if (board_mask & combo_mask) != 0 {
+                            beliefs[i] = 0f64;
+                        }
+                    }
+                }
             }
-            // spawn discounter
-            // let arc_self = arc_self.clone();
-            // scope.spawn(move |_| {
-            //     let mut i = self.iterations.load(atomic::Ordering::Relaxed);
-            //     while i < max_iterations {
-            //         if i % DISCOUNT_INTERVAL == 0 {
-            //             arc_self.discount(i);
-            //         }
-            //         i = self.iterations.load(atomic::Ordering::Relaxed);
-            //     }
-            // });
-        })
-        .unwrap();
-
-        Arc::try_unwrap(total_evs).unwrap().into_inner().unwrap()
-    }
-    /// save regrets to a file
-    pub fn save_regrets(&self) -> Result<(), Error> {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(format!("data/regrets-{}.dat", self.options_string))?;
-        for action_index in 0..self.infosets.len() {
-            file.write_slice_to_file(&self.infosets[action_index].regrets[..])?;
+            return self.traverse_br(node.apply_action(action), beliefs, br_player);
         }
-        Ok(())
-    }
-    /// save regrets to a file
-    pub fn save_strategy(&self) -> Result<(), Error> {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(format!("data/strategy-{}.dat", self.options_string))?;
-        for action_index in 0..self.infosets.len() {
-            file.write_slice_to_file(&self.infosets[action_index].strategy_sum[..])?;
+        if node.current_player() == br_player as i8 {
+            // calculate action using br
+            let action = self.local_br(node.clone(), beliefs, br_player);
+            self.traverse_br(node.apply_action(action), beliefs, br_player)
+        } else {
+            // calculate action using cummulative strategy
+            let legal_actions = node.valid_actions(&self.betting_abstraction);
+            let action_count = legal_actions.len();
+            let mut cards: [Card; 7] = [52; 7];
+            cards[..2].clone_from_slice(&node.player(usize::from(br_player)).cards()[..]);
+            cards[2..(5 + 2)].clone_from_slice(&node.board()[..5]);
+            let hand_bucket = self.hand_indexers[usize::from(node.round())].get_index(&cards);
+            let is_key = format!("{}{}", hand_bucket, node.history_string());
+            let strategy = self
+                .infosets
+                .get_or_insert(is_key.clone(), action_count)
+                .average_strategy();
+            let a_idx = sample_action_index(&strategy, &mut self.rng);
+            self.traverse_br(node.apply_action(legal_actions[a_idx]), beliefs, br_player)
         }
-        Ok(())
     }
-    /// load regrets from a file
-    pub fn load_regrets(&mut self) -> Result<(), Error> {
-        let mut file = OpenOptions::new()
-            .read(true)
-            .open(format!("data/regrets-{}.dat", self.options_string))?;
-        let mut offset = 0u64;
-        for action_index in 0..self.infosets.len() {
-            file.seek(SeekFrom::Start(offset))?;
-            let size = self.infosets[action_index].regrets.len();
-            let mut buffer = vec![0; size * size_of::<f64>()];
-            file.read_exact(&mut buffer)?;
-            unsafe {
-                self.infosets[action_index].regrets =
-                    Vec::from_raw_parts(buffer.as_mut_ptr() as *mut f64, size, size);
-                forget(buffer);
+    /// Calculates best response action using local br function
+    fn local_br(&mut self, node: GameState, beliefs: &Vec<f64>, br_player: u8) -> Action {
+        let valid_actions = node.valid_actions(&self.betting_abstraction);
+        let mut action_utils = vec![0f64; valid_actions.len()];
+        // get check/call util
+        let wp = self.wp_rollout(node.clone(), &beliefs, br_player);
+        let pot = node.pot() as f64;
+        let asked = (node.player(usize::from(1 - br_player)).wager()
+            - node.player(usize::from(br_player)).wager()) as f64;
+        // the utility for check/call
+        action_utils[CALL_IDX] = (wp * pot) - ((1f64 - wp) * asked);
+        // loop over bet / raises
+        for (i, action) in valid_actions.iter().enumerate() {
+            // continue if action is not bet/size
+            let br_amt: f64;
+            if let Action::BetRaise(amt) = action {
+                br_amt = *amt as f64;
+            } else {
+                continue;
+            };
+            let mut fp = 0f64;
+            let next_state = node.apply_action(*action);
+            let opp_legal_actions = next_state.valid_actions(&self.betting_abstraction);
+            let opp_action_count = opp_legal_actions.len();
+            // loop over opponent range
+            let mut new_beliefs = beliefs.to_owned();
+            for opp_hand_idx in 0..beliefs.len() {
+                if beliefs[opp_hand_idx] == 0f64 {
+                    continue;
+                }
+                let opp_hole_cards =
+                    self.hand_ranges[usize::from(1 - br_player)].hands[opp_hand_idx];
+                let opp_bucket = self.get_bucket(opp_hole_cards, &next_state);
+                let is_key = format!("{}{}", opp_bucket, next_state.history_string());
+                let opp_strategy = self
+                    .infosets
+                    .get_or_insert(is_key, opp_action_count)
+                    .current_strategy();
+                fp += beliefs[opp_hand_idx] * opp_strategy[CHECK_FOLD_IDX];
+                new_beliefs[opp_hand_idx] *= 1f64 - opp_strategy[CHECK_FOLD_IDX];
             }
-            offset += (size * size_of::<f64>()) as u64;
+            normalize(&mut new_beliefs);
+            let wp = self.wp_rollout(next_state.clone(), &new_beliefs, br_player);
+            action_utils[i] =
+                (fp * pot) + ((1f64 - fp) * (wp * br_amt)) - ((1f64 - wp) * (asked + br_amt));
         }
-        Ok(())
-    }
-    /// load regrets from a file
-    pub fn load_strategy(&mut self) -> Result<(), Error> {
-        let mut file = OpenOptions::new()
-            .read(true)
-            .open(format!("data/strategy-{}.dat", self.options_string))?;
-        let mut offset = 0u64;
-        for action_index in 0..self.infosets.len() {
-            file.seek(SeekFrom::Start(offset))?;
-            let size = self.infosets[action_index].strategy_sum.len();
-            let mut buffer = vec![0; size * size_of::<f64>()];
-            file.read_exact(&mut buffer)?;
-            unsafe {
-                self.infosets[action_index].strategy_sum =
-                    Vec::from_raw_parts(buffer.as_mut_ptr() as *mut f64, size, size);
-                forget(buffer);
+        // get action that has maximum utility
+        let mut max_util = 0f64;
+        let mut max_action_idx = 0;
+        for (i, util) in action_utils.iter().enumerate() {
+            if *util > max_util {
+                max_util = *util;
+                max_action_idx = i;
             }
-            offset += (size * size_of::<f64>()) as u64;
         }
-        Ok(())
+        if max_util > 0f64 {
+            return valid_actions[max_action_idx];
+        }
+        valid_actions[CHECK_FOLD_IDX]
+    }
+    /// Calcuates win percentage if both players check/call from this node onward
+    /// Exhaustivly deals all possible remaining board cards and computes the mean probability
+    /// of winning with hand h with opponents range
+    fn wp_rollout(&self, node: GameState, beliefs: &Vec<f64>, br_player: u8) -> f64 {
+        let mut wins = 0f64;
+        let mut games = 0f64;
+        // copy board cards
+        let mut board_card_count = 0;
+        let mut used_cards_mask = 0u64;
+        let mut board: Hand = Hand::default();
+        for (i, card) in node.board().iter().enumerate() {
+            if *card >= 52 {
+                break;
+            }
+            board += CARDS[usize::from(*card)];
+            board_card_count += 1;
+            used_cards_mask |= 1u64 << *card;
+        }
+        let our_cards = node.player(br_player.into()).cards();
+        let our_hand: Hand = CARDS[usize::from(our_cards[0])] + CARDS[usize::from(our_cards[1])];
+        used_cards_mask |= (1u64 << our_cards[0]) | (1u64 << our_cards[1]);
+        // iterate over all possible boards
+        if 5 - board_card_count == 0 {
+            let our_score = evaluate(&(our_hand + board));
+            for (i, prob) in beliefs.iter().enumerate() {
+                if *prob == 0f64 {
+                    continue;
+                }
+                let opp_combo = &self.hand_ranges[usize::from(1 - br_player)].hands[i];
+                let opp_combo_mask = (1u64 << opp_combo.0) | (1u64 << opp_combo.1);
+                if (opp_combo_mask & used_cards_mask) != 0 {
+                    continue;
+                }
+                let opp_hand: Hand =
+                    CARDS[usize::from(opp_combo.0)] + CARDS[usize::from(opp_combo.1)];
+                let opp_score = evaluate(&(opp_hand + board));
+                if our_score > opp_score {
+                    wins += *prob;
+                }
+                if our_score == opp_score {
+                    wins += *prob * 0.5;
+                }
+                games += *prob;
+            }
+            return wins / games;
+        }
+        let board_combos = CardComboIter::new(used_cards_mask, 5 - board_card_count);
+        for combo in board_combos {
+            // get eval combo
+            let mut board_combo = board;
+            let mut used_cards_mask = used_cards_mask;
+            for card in combo.iter() {
+                board_combo += CARDS[usize::from(*card)];
+                used_cards_mask |= 1u64 << *card;
+            }
+            let our_score = evaluate(&(our_hand + board_combo));
+            for (i, prob) in beliefs.iter().enumerate() {
+                if *prob == 0f64 {
+                    continue;
+                }
+                let opp_combo = &self.hand_ranges[usize::from(1 - br_player)].hands[i];
+                let opp_combo_mask = (1u64 << opp_combo.0) | (1u64 << opp_combo.1);
+                if (opp_combo_mask & used_cards_mask) != 0 {
+                    continue;
+                }
+                let opp_hand: Hand =
+                    CARDS[usize::from(opp_combo.0)] + CARDS[usize::from(opp_combo.1)];
+                let opp_score = evaluate(&(opp_hand + board_combo));
+                if our_score > opp_score {
+                    wins += *prob;
+                }
+                if our_score == opp_score {
+                    wins += *prob * 0.5;
+                }
+                games += *prob;
+            }
+        }
+        wins / games
+    }
+    fn get_bucket(&self, hole_cards: Combo, node: &GameState) -> u32 {
+        let mut cards: [Card; 7] = [52; 7];
+        cards[0] = hole_cards.0;
+        cards[1] = hole_cards.1;
+        for i in 0..5 {
+            cards[i + 2] = node.board()[i];
+        }
+        let hand_index = self.hand_indexers[usize::from(node.round())].get_index(&cards);
+        // let bucket = self.card_abstraction[usize::from(node.round())].get(hand_index as usize);
+        hand_index as u32
     }
 }
 
 #[cfg(test)]
-mod tests {
+mod test {
     use super::*;
-    use test::bench::Bencher;
+    use crate::state::GameStateOptions;
 
     #[test]
-    fn test_init_flop_valid() {
-        let options = SolverOptions {
-            board_mask: get_card_mask("AhAdAc"),
-            hand_ranges: vec!["random".to_string(), "random".to_string()],
-            stacks: vec![10000, 10000],
-            pot: 100,
-            bet_sizes: vec![
-                vec![vec![0.5], vec![0.5], vec![0.5]],
-                vec![vec![0.5], vec![0.5], vec![0.5]],
-            ],
-            raise_sizes: vec![
-                vec![vec![1.0], vec![1.0], vec![1.0]],
-                vec![vec![1.0], vec![1.0], vec![1.0]],
-            ],
-            card_abstraction: vec!["null".to_string(), "emd".to_string(), "ochs".to_string()],
+    fn test_solver_init() -> Result<(), Box<dyn std::error::Error>> {
+        // basic river solver
+        let initial_state = GameState::new(GameStateOptions {
+            stacks: [10000, 10000],
+            initial_board: [0, 1, 2, 3, 4],
+            wagers: [0, 0],
+            pot: 1000,
+        })?;
+        let betting_abstraction = BettingAbstraction {
+            bet_sizes: [vec![], vec![], vec![], vec![0.5, 1.0]],
+            raise_sizes: [vec![], vec![], vec![], vec![1.0]],
+            all_in_threshold: 0f64,
         };
-        let solver = Solver::init(options);
-        assert_eq!(solver.is_ok(), true);
-    }
-
-    #[test]
-    fn test_init_turn_valid() {
-        let options = SolverOptions {
-            board_mask: get_card_mask("AhAdAcKc"),
-            hand_ranges: vec!["random".to_string(), "random".to_string()],
-            stacks: vec![10000, 10000],
-            pot: 100,
-            bet_sizes: vec![vec![vec![0.5], vec![0.5]], vec![vec![0.5], vec![0.5]]],
-            raise_sizes: vec![vec![vec![1.0], vec![1.0]], vec![vec![1.0], vec![1.0]]],
-            card_abstraction: vec!["null".to_string(), "ochs".to_string()],
-        };
-        let solver = Solver::init(options);
-        assert_eq!(solver.is_ok(), true);
-    }
-
-    #[test]
-    fn test_init_river_valid() {
-        let options = SolverOptions {
-            board_mask: get_card_mask("AhAdAcKc2d"),
-            hand_ranges: vec!["random".to_string(), "random".to_string()],
-            stacks: vec![10000, 10000],
-            pot: 100,
-            bet_sizes: vec![vec![vec![0.5]], vec![vec![0.5]]],
-            raise_sizes: vec![vec![vec![1.0]], vec![vec![1.0]]],
-            card_abstraction: vec!["null".to_string()],
-        };
-        let solver = Solver::init(options);
-        assert_eq!(solver.is_ok(), true);
-    }
-
-    // #[bench]
-    // // 1,062 ns/iter (+/- 62)
-    // fn bench_deal(b: &mut Bencher) {
-    //     let options = SolverOptions {
-    //         board_mask: get_card_mask("AhAdAc"),
-    //         hand_ranges: vec!["random".to_string(), "random".to_string()],
-    //         stacks: vec![10000, 10000],
-    //         pot: 100,
-    //         bet_sizes: vec![
-    //             vec![vec![0.5], vec![0.5], vec![0.5]],
-    //             vec![vec![0.5], vec![0.5], vec![0.5]],
-    //         ],
-    //         raise_sizes: vec![
-    //             vec![vec![1.0], vec![1.0], vec![1.0]],
-    //             vec![vec![1.0], vec![1.0], vec![1.0]],
-    //         ],
-    //         card_abstraction: vec!["null".to_string(), "emd".to_string(), "ochs".to_string()],
-    //     };
-    //     let mut solver = Solver::init(options).unwrap();
-    //     b.iter(|| {
-    //         solver.deal();
-    //     });
-    // }
-
-    // #[bench]
-    // // 18,400 ns/iter (+/- 7,624)
-    // fn bench_traverse_prune(b: &mut Bencher) {
-    //     let options = SolverOptions {
-    //         board_mask: get_card_mask("AhAdAc"),
-    //         hand_ranges: vec!["random".to_string(), "random".to_string()],
-    //         stacks: vec![10000, 10000],
-    //         pot: 100,
-    //         bet_sizes: vec![
-    //             vec![vec![0.5], vec![0.5], vec![0.5]],
-    //             vec![vec![0.5], vec![0.5], vec![0.5]],
-    //         ],
-    //         raise_sizes: vec![
-    //             vec![vec![1.0], vec![1.0], vec![1.0]],
-    //             vec![vec![1.0], vec![1.0], vec![1.0]],
-    //         ],
-    //         card_abstraction: vec!["null".to_string(), "emd".to_string(), "ochs".to_string()],
-    //     };
-    //     let mut solver = Solver::init(options).unwrap();
-    //     solver.deal();
-    //     b.iter(|| {
-    //         solver.traverse(0, 1.0, 0, true);
-    //     });
-    // }
-
-    #[bench]
-    // 38,969,912 ns/iter (+/- 14,411,448)
-    fn bench_train_1000(b: &mut Bencher) {
-        let options = SolverOptions {
-            board_mask: get_card_mask("AhAdAc"),
-            hand_ranges: vec!["random".to_string(), "random".to_string()],
-            stacks: vec![10000, 10000],
-            pot: 100,
-            bet_sizes: vec![
-                vec![vec![0.5], vec![0.5], vec![0.5]],
-                vec![vec![0.5], vec![0.5], vec![0.5]],
-            ],
-            raise_sizes: vec![
-                vec![vec![1.0], vec![1.0], vec![1.0]],
-                vec![vec![1.0], vec![1.0], vec![1.0]],
-            ],
-            card_abstraction: vec!["null".to_string(), "emd".to_string(), "ochs".to_string()],
-        };
-        let mut solver = Solver::init(options).unwrap();
-        b.iter(|| {
-            solver.run(1000);
+        let solver = Solver::init(SolverOptions {
+            initial_state,
+            hand_ranges: [String::from("random"), String::from("random")],
+            betting_abstraction,
+            card_abstraction: vec![String::from("null")],
         });
-    }
-
-    #[test]
-    fn test_train_100000() {
-        let options = SolverOptions {
-            board_mask: get_card_mask("QhJdTs"),
-            hand_ranges: vec![
-                "22+,AT+,KT+,QT+,JTs,A5s".to_string(),
-                "22+,A9+,KT+,QT+,JT+,T9s,98s,87s,".to_string(),
-            ],
-            stacks: vec![10000, 10000],
-            pot: 100,
-            bet_sizes: vec![
-                vec![vec![0.5], vec![0.5], vec![0.5]],
-                vec![vec![0.5], vec![0.5], vec![0.5]],
-            ],
-            raise_sizes: vec![
-                vec![vec![1.0], vec![1.0], vec![1.0]],
-                vec![vec![1.0], vec![1.0], vec![1.0]],
-            ],
-            card_abstraction: vec!["null".to_string(), "emd".to_string(), "ochs".to_string()],
-        };
-        let mut solver = Solver::init(options).unwrap();
-        solver.run(100000);
-    }
-
-    #[test]
-    fn test_save_load() {
-        let options = SolverOptions {
-            board_mask: get_card_mask("QhJdTs"),
-            hand_ranges: vec![
-                "22+,AT+,KT+,QT+,JTs,A5s".to_string(),
-                "22+,A9+,KT+,QT+,JT+,T9s,98s,87s,".to_string(),
-            ],
-            stacks: vec![10000, 10000],
-            pot: 100,
-            bet_sizes: vec![
-                vec![vec![0.5], vec![0.5], vec![0.5]],
-                vec![vec![0.5], vec![0.5], vec![0.5]],
-            ],
-            raise_sizes: vec![
-                vec![vec![1.0], vec![1.0], vec![1.0]],
-                vec![vec![1.0], vec![1.0], vec![1.0]],
-            ],
-            card_abstraction: vec!["null".to_string(), "emd".to_string(), "ochs".to_string()],
-        };
-        let mut solver = Solver::init(options).unwrap();
-        solver.run(10000);
-        // generate test data
-        let mut rng = thread_rng();
-        let mut test_data = vec![];
-        for _ in 0..1000 {
-            let action_idx = rng.gen_range(0, solver.infosets.len());
-            let idx = rng.gen_range(0, solver.infosets[action_idx].regrets.len());
-            let value = solver.infosets[action_idx].regrets[idx];
-            test_data.push((action_idx, idx, value));
-        }
-        assert_eq!(solver.save_regrets().is_ok(), true);
-        assert_eq!(solver.load_regrets().is_ok(), true);
-        // compare test data to original
-        for (action_idx, idx, value) in test_data {
-            assert_eq!(solver.infosets[action_idx].regrets[idx], value);
-        }
-    }
-
-    #[bench]
-    // 3,011,828 ns/iter (+/- 643,560)
-    fn solver_bench_save(b: &mut Bencher) {
-        let options = SolverOptions {
-            board_mask: get_card_mask("QhJdTs"),
-            hand_ranges: vec![
-                "22+,AT+,KT+,QT+,JTs,A5s".to_string(),
-                "22+,A9+,KT+,QT+,JT+,T9s,98s,87s,".to_string(),
-            ],
-            stacks: vec![10000, 10000],
-            pot: 100,
-            bet_sizes: vec![
-                vec![vec![0.5], vec![0.5], vec![0.5]],
-                vec![vec![0.5], vec![0.5], vec![0.5]],
-            ],
-            raise_sizes: vec![
-                vec![vec![1.0], vec![1.0], vec![1.0]],
-                vec![vec![1.0], vec![1.0], vec![1.0]],
-            ],
-            card_abstraction: vec!["null".to_string(), "emd".to_string(), "ochs".to_string()],
-        };
-        let mut solver = Solver::init(options).unwrap();
-        solver.run(10000);
-        b.iter(|| {
-            solver.save_regrets().unwrap();
-        });
-    }
-
-    #[bench]
-    // 441,453 ns/iter (+/- 113,647)
-    fn solver_bench_load(b: &mut Bencher) {
-        let options = SolverOptions {
-            board_mask: get_card_mask("QhJdTs"),
-            hand_ranges: vec![
-                "22+,AT+,KT+,QT+,JTs,A5s".to_string(),
-                "22+,A9+,KT+,QT+,JT+,T9s,98s,87s,".to_string(),
-            ],
-            stacks: vec![10000, 10000],
-            pot: 100,
-            bet_sizes: vec![
-                vec![vec![0.5], vec![0.5], vec![0.5]],
-                vec![vec![0.5], vec![0.5], vec![0.5]],
-            ],
-            raise_sizes: vec![
-                vec![vec![1.0], vec![1.0], vec![1.0]],
-                vec![vec![1.0], vec![1.0], vec![1.0]],
-            ],
-            card_abstraction: vec!["null".to_string(), "emd".to_string(), "ochs".to_string()],
-        };
-        let mut solver = Solver::init(options).unwrap();
-        solver.run(10000);
-        solver.save_regrets().unwrap();
-        // generate test data
-        b.iter(|| {
-            solver.load_regrets().unwrap();
-        });
-    }
-
-    #[test]
-    fn test_sample_pdf() {
-        let mut rng = thread_rng();
-        let pdf = vec![1.0, 0.0, 0.0];
-        let a = sample_pdf(&pdf, &mut rng);
-        assert_eq!(a, 0);
-        let pdf = vec![0.0, 1.0, 0.0];
-        let a = sample_pdf(&pdf, &mut rng);
-        assert_eq!(a, 1);
-        let pdf = vec![0.0, 0.0, 1.0];
-        let a = sample_pdf(&pdf, &mut rng);
-        assert_eq!(a, 2);
-        let pdf = vec![0.0, 0.5, 0.5];
-        let a = sample_pdf(&pdf, &mut rng);
-        assert_ne!(a, 0);
-        let pdf = vec![0.5, 0.5, 0.0];
-        let a = sample_pdf(&pdf, &mut rng);
-        assert_ne!(a, 2);
-    }
-
-    #[test]
-    fn test_options_to_string() {
-        let options = SolverOptions {
-            board_mask: get_card_mask("AhAdAcKc"),
-            hand_ranges: vec!["random".to_string(), "random".to_string()],
-            stacks: vec![10000, 10000],
-            pot: 100,
-            bet_sizes: vec![vec![vec![0.5], vec![0.5]], vec![vec![0.5], vec![0.5]]],
-            raise_sizes: vec![vec![vec![1.0], vec![1.0]], vec![vec![1.0], vec![1.0]]],
-            card_abstraction: vec!["null".to_string(), "ochs".to_string()],
-        };
-        let as_string = "b4081387162304512-hr[random,random]-st[10000,10000]-p100-bs[[[0.5],[0.5]],[[0.5],[0.5]]]-rs[[[1.0],[1.0]],[[1.0],[1.0]]]-ca[null,ochs]";
-        assert_eq!(&options.to_string(), as_string);
+        assert_eq!(solver.is_ok(), true);
+        Ok(())
     }
 }

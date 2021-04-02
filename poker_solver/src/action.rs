@@ -4,46 +4,50 @@ use std::fmt;
 /// Represents a player action
 #[derive(Debug, Copy, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub enum Action {
+    /// Check/Fold action
+    CheckFold,
+    /// Call a Bet or raise
+    Call,
     /// Bet action
-    /// value is size in chips
-    BET(u32),
+    /// value is in chips
     /// Raise is a "by value"
     /// meaning amount of chips past the call value
-    RAISE(u32),
-    /// Fold action
-    FOLD,
-    /// Call a bet or raise
-    CALL,
-    /// Check
-    CHECK,
+    /// It's fine to have these as the same enum variant because Bet-Bet cannot occur and neither can Raise-Raise
+    BetRaise(u32),
+    /// A chance card dealing
+    Chance([u8; 4]),
 }
+
+/// Sinces check/fold & call actions cannot appear together
+/// and they always appear first, we can easily index them
+pub const CHECK_FOLD_IDX: usize = 0;
+pub const CALL_IDX: usize = 1;
 
 /// For printing actions to terminal
 ///
 /// # Example
 ///
 /// ```
-/// println!("{}", Action::FOLD);
+/// use poker_solver::action::Action;
+/// println!("{}", Action::Fold);
 /// ```
 impl fmt::Display for Action {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         return match self {
-            Action::BET(size) => write!(f, "Bet {}", size),
-            Action::RAISE(size) => write!(f, "Raise {}", size),
-            Action::FOLD => write!(f, "Fold"),
-            Action::CALL => write!(f, "Call"),
-            Action::CHECK => write!(f, "Check"),
+            Action::BetRaise(size) => write!(f, "B({})", size),
+            Action::CheckFold => write!(f, "F"),
+            Action::Call => write!(f, "C"),
+            Action::Chance(_) => write!(f, "D"),
         };
     }
 }
 
 /// List of available actions
 ///
-/// Note: Bet and Raise sizes are invalid
-pub static ACTIONS: &[Action; 5] = &[
-    Action::BET(1),
-    Action::RAISE(1),
-    Action::FOLD,
-    Action::CALL,
-    Action::CHECK,
+/// Note: Bet and Raise sizes could be invalid
+pub static ACTIONS: &[Action; 4] = &[
+    Action::CheckFold,
+    Action::Call,
+    Action::BetRaise(1),
+    Action::Chance([52; 4]),
 ];

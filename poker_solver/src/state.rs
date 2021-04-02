@@ -1,16 +1,23 @@
-use rand::prelude::*;
-use rand::thread_rng;
-use std::cmp::min;
-
 use crate::action::{Action, ACTIONS};
+use crate::betting_abstraction::BettingAbstraction;
 use crate::card::Card;
-use crate::constants::*;
+use std::convert::TryFrom;
+// use crate::constants::*;
 use crate::round::BettingRound;
+// use rand::prelude::*;
+use rand::prelude::SliceRandom;
+use rand::Rng;
+use std::result::Result;
+use thiserror::Error as ThisError;
+
+use rust_poker::hand_evaluator::{evaluate, Hand, CARDS};
+use rust_poker::hand_range::HandRange;
 
 /// We'll use this for now to define min-bets
 /// this will be changed in the future
-static BIG_BLIND: u32 = 10;
-static SMALL_BLIND: u32 = 5;
+const BIG_BLIND: u32 = 10;
+const SMALL_BLIND: u32 = 5;
+const CHANCE_PLAYER: i8 = -1;
 
 /// Represents the state of a single player in a HUNL Texas Holdem Game
 #[derive(Debug, Copy, Clone)]
@@ -35,29 +42,6 @@ impl Default for PlayerState {
             has_folded: false,
         }
     }
-}
-
-/// Represents the current state of a HUNL Texas Holdem Game
-///
-/// State is small and immutable
-/// This means that functions which update state operate on a copy of itself
-#[derive(Debug, Copy, Clone)]
-pub struct GameState {
-    /// The current betting round
-    round: BettingRound,
-    /// The size in chips of the pot
-    pot: u32,
-    /// The state of each player
-    players: [PlayerState; MAX_PLAYERS],
-    /// index of current player
-    current_player: u8,
-    /// Community Cards
-    /// card is n in 0..52 where n = 4 * rank + suit
-    board: [Card; 5],
-    /// Has betting finished for the current round
-    bets_settled: bool,
-    /// number of players in this game
-    player_count: usize,
 }
 
 impl PlayerState {
@@ -93,463 +77,678 @@ impl PlayerState {
     }
 }
 
+#[derive(Debug)]
+pub struct GameStateOptions {
+    /// initial stack sizes for each player
+    /// stacks must be greater than zero
+    pub stacks: [u32; 2],
+    /// initial wagers for each player
+    pub wagers: [u32; 2],
+    /// initial pot size
+    /// pot should be greater than or equal to the sum of all wagers
+    pub pot: u32,
+    /// Initial board cards
+    pub initial_board: [Card; 5],
+}
+
+#[derive(Debug, ThisError)]
+pub enum GameStateError {
+    #[error("invalid board card count")]
+    InvalidBoard,
+    #[error("invalid pot")]
+    InvalidPot,
+    #[error("invalid stack")]
+    InvalidStacks,
+}
+
+/// Represents the current state of a HUNL Texas Holdem Game
+/// **Note** this is the two player variant of Texas Holdem
+#[derive(Debug)]
+pub struct GameState {
+    /// The current betting round
+    round: BettingRound,
+    /// The size in chips of the pot
+    pot: u32,
+    /// The state of each player
+    players: [PlayerState; 2],
+    /// index of current player, if the index == -1, the current player is the chance player
+    current_player: i8,
+    /// Community Cards
+    /// card is n in 0..52 where n = 4 * rank + suit
+    board: [Card; 5],
+    /// mask of used cards used for sampling
+    used_cards_mask: u64,
+    /// game history
+    history: Vec<Action>,
+    /// Has the action at this round settled
+    bets_settled: bool,
+}
+
+impl Clone for GameState {
+    fn clone(&self) -> GameState {
+        GameState {
+            round: self.round,
+            pot: self.pot,
+            players: self.players,
+            current_player: self.current_player,
+            board: self.board,
+            bets_settled: false,
+            used_cards_mask: self.used_cards_mask,
+            history: self.history.clone(),
+        }
+    }
+}
+
 impl GameState {
-    /// Create a game state object with pot set to initial pot size
-    /// and player stacks set to stack size
-    ///
-    /// # Arguments
-    ///
-    /// * `pot` - Initial pot size
-    /// * `stack` - Initial stack size for each player
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use poker_solver::state::GameState;
-    /// let game_state = GameState::new(100, [10000, 10000]);
-    /// assert_eq!(game_state.pot(), 100);
-    /// ```
-    pub fn new(pot: u32, stacks: Vec<u32>, round: Option<BettingRound>) -> GameState {
-        let player_count = stacks.len();
-        let mut players = [PlayerState::default(); MAX_PLAYERS];
-        for i in 0..player_count {
-            players[i] = PlayerState::new(stacks[i]);
+    /// Create a game state object
+    /// **Note:** Will panic if wagers are specified and game is not in preflop
+    pub fn new(options: GameStateOptions) -> Result<GameState, GameStateError> {
+        let mut board = [52; 5];
+        let mut board_card_count = 0;
+        let mut used_cards_mask = 0u64;
+        // copy board cards
+        for i in 0..5 {
+            if options.initial_board[i] < 52 {
+                board_card_count += 1;
+                board[i] = options.initial_board[i];
+                used_cards_mask |= 1u64 << board[i];
+            } else {
+                break;
+            }
         }
-        GameState {
-            round: round.unwrap_or(BettingRound::PREFLOP),
-            pot,
-            player_count,
+        let round = match board_card_count {
+            0 => BettingRound::Preflop,
+            3 => BettingRound::Flop,
+            4 => BettingRound::Turn,
+            5 => BettingRound::River,
+            _ => {
+                return Err(GameStateError::InvalidBoard);
+            }
+        };
+        let mut players = [PlayerState::default(); 2];
+        let mut wager_sum = 0;
+        for i in 0..2 {
+            players[i].stack = options.stacks[i];
+            players[i].wager = options.wagers[i];
+            wager_sum += players[i].wager;
+            if players[i].stack == 0 {
+                return Err(GameStateError::InvalidStacks);
+            }
+        }
+        if wager_sum > options.pot {
+            return Err(GameStateError::InvalidPot);
+        }
+        Ok(GameState {
+            round,
+            pot: options.pot,
             players,
-            current_player: 0,
-            // 52 since its the first invalid card
-            board: [52; 5],
+            current_player: CHANCE_PLAYER,
             bets_settled: false,
-        }
+            board,
+            used_cards_mask,
+            history: Vec::new(),
+        })
     }
-    /// Creates a game state object but with initial wager equal to blinds
-    ///
-    /// Both players post their blinds
-    /// First to act is switched preflop
-    ///
-    /// # Arguments
-    ///
-    /// * `stacks` The stack size of each player
-    /// * `blinds` Big and small blind size, Big should come before small
-    /// * `round` optinal initial round, defaults to `BettingRound::PREFLOP`
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use poker_solver::state::GameState;
-    /// let game_state = GameState::init_with_blinds([10000, 10000], [10, 5], None);
-    /// assert_eq!(game_state.pot(), 15);
-    /// ```
-    pub fn init_with_blinds(
-        stacks: Vec<u32>,
-        blinds: Vec<u32>,
-        round: Option<BettingRound>,
-    ) -> GameState {
-        let mut players = [PlayerState::default(); MAX_PLAYERS];
-        let player_count = stacks.len();
-        for i in 0..player_count {
-            players[i] = PlayerState::new(stacks[i]);
-        }
-        let big_blind = min(stacks[0], blinds[0]);
-        players[0].stack -= big_blind;
-        players[0].wager = big_blind;
-        let small_blind = min(stacks[1], blinds[1]);
-        players[1].stack -= small_blind;
-        players[1].wager = small_blind;
-        GameState {
-            round: round.unwrap_or(BettingRound::PREFLOP),
-            pot: big_blind + small_blind,
-            player_count,
-            players,
-            current_player: 1,
-            // 52 since its the first invalid card
-            board: [52; 5],
-            bets_settled: false,
-        }
+    /// Return true is this is a terminal state
+    pub fn is_terminal(&self) -> bool {
+        (self.bets_settled && self.round == BettingRound::River) || self.player_folded()
     }
-    /// Return a list of valid actions a player can take
-    ///
-    /// Does not account for Bet or Raise sizes
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use poker_solver::state::GameState;
-    ///
-    /// let mut state = GameState::new(0, [1000, 1000]);
-    /// assert_eq!(state.valid_actions().len(), 2); // CHECK or BET
-    pub fn valid_actions(&self) -> Vec<Action> {
-        ACTIONS
-            .iter()
-            .filter(|&&action| {
-                if let Action::BET(_) = action {
-                    let min_bet = std::cmp::min(BIG_BLIND, self.current_player().stack);
-                    self.is_action_valid(Action::BET(min_bet))
-                } else if let Action::RAISE(_) = action {
-                    let min_raise =
-                        std::cmp::min(2 * self.other_player().wager, self.current_player().stack);
-                    self.is_action_valid(Action::RAISE(min_raise))
-                } else {
-                    self.is_action_valid(action)
-                }
-            })
-            .cloned()
-            .collect()
+    /// Return true if this is an action node
+    pub const fn is_action(&self) -> bool {
+        self.current_player > CHANCE_PLAYER
     }
-    /// Apply an action and return a new updated state object
-    ///
-    /// # Arguments
-    ///
-    /// * `rng` A random number generator
-    /// * `action` A valid action
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use poker_solver::state::GameState;
-    /// use poker_solver::state::Action;
-    /// let mut rng = rand::thread_rng();
-    /// let mut game_state = GameState::new(100, [10000, 10000]);
-    /// assert_eq!(game_state.current_player_idx(), 0);
-    /// game_state.deal_cards(&mut rng);
-    /// game_state = game_state.apply_action(&mut rng, Action::CHECK);
-    /// assert_eq!(game_state.current_player_idx(), 1);
-    /// ```
-    pub fn apply_action(&self, action: Action) -> GameState {
-        let mut next_state = *self;
-        match action {
-            Action::BET(bet_size) => {
-                // if player has less than wager, put player all-in
-                let mut wager = bet_size;
-                if next_state.current_player().stack < bet_size {
-                    wager = next_state.current_player().stack;
-                }
+    /// Return true if this is a private chance node
+    pub const fn is_chance(&self) -> bool {
+        self.current_player == CHANCE_PLAYER
+    }
+    /// Is this the initial game state
+    pub fn is_initial_state(&self) -> bool {
+        self.history.is_empty()
+    }
+    /// Has a player folded
+    pub fn player_folded(&self) -> bool {
+        self.players[0].has_folded || self.players[1].has_folded
+    }
+    /// Is a player all in
+    pub fn player_allin(&self) -> bool {
+        (self.players[0].stack == 0) || (self.players[1].stack == 0)
+    }
+    /// Returns a list of valid actions given a betting abstraction
+    pub fn valid_actions(&self, betting_abstraction: &BettingAbstraction) -> Vec<Action> {
+        let mut actions = vec![];
+        let our_stack = self.acting_player().stack;
+        let our_stack_double = our_stack as f64;
+        let pot_double = self.pot as f64;
 
-                next_state.current_player_mut().wager = wager;
-                next_state.current_player_mut().stack -= wager;
-                next_state.pot += wager;
-                next_state.current_player = 1 - next_state.current_player;
-            }
-            Action::RAISE(raise_size) => {
-                // call amount plus our raise
-                let diff = next_state.other_player().wager - next_state.current_player().wager;
-                let mut wager = diff + raise_size;
-
-                // if player has less than wager, put player all in
-                if next_state.current_player().stack < wager {
-                    wager = next_state.current_player().stack;
-                }
-                next_state.current_player_mut().wager += wager;
-                next_state.current_player_mut().stack -= wager;
-                next_state.pot += wager;
-                next_state.current_player = 1 - next_state.current_player;
-            }
-            Action::CALL => {
-                // get difference in bets
-                let mut wager = next_state.other_player().wager - next_state.current_player().wager;
-                // if player does not have enough to call bet
-                // put player all in
-                // and return chips to other player
-                if next_state.current_player().stack < wager {
-                    let diff = wager - next_state.current_player().stack;
-                    next_state.other_player_mut().wager -= diff;
-                    next_state.other_player_mut().stack += diff;
-                    next_state.pot -= diff;
-                    wager = next_state.current_player().stack;
-                }
-                next_state.current_player_mut().wager += wager;
-                next_state.current_player_mut().stack -= wager;
-                next_state.pot += wager;
-                next_state.bets_settled = true;
-            }
-            Action::FOLD => {
-                // return difference in wager to other player
-                let diff = next_state.other_player().wager - next_state.current_player().wager;
-                next_state.other_player_mut().wager -= diff;
-                next_state.other_player_mut().stack += diff;
-                // remove from pot
-                next_state.pot -= diff;
-                // set player folded
-                next_state.current_player_mut().has_folded = true;
-                next_state.bets_settled = true;
-            }
-            Action::CHECK => {
-                // last to act switchs pre flop
-                if next_state.round == BettingRound::PREFLOP && next_state.current_player == 0 {
-                    next_state.bets_settled = true;
-                }
-                // if current player is last to act bets are even
-                if next_state.round != BettingRound::PREFLOP && next_state.current_player == 1 {
-                    next_state.bets_settled = true;
-                }
-                next_state.current_player = 1 - next_state.current_player;
-            }
-        }
-        next_state
-    }
-    /// Deals cards in the current round
-    /// and update game state
-    ///
-    /// If self.round == PREFLOP, it will deal cards to both players
-    /// If self.round == FLOP, it will deal 3 public cards
-    /// If self.round == TURN, it will deal 1 public card
-    /// If self.round == RIVER, it will deal 1 public card
-    ///
-    /// # Arguments
-    ///
-    /// * `rng` a mutable reference to a random number generator
-    pub fn deal_cards(&mut self) {
-        let mut rng = thread_rng();
-        match self.round {
-            BettingRound::PREFLOP => {
-                // deal 2 random cards to each player
-                // generate 4 unique random cards
-                let mut used_card_mask = 0u64;
-                let cards: Vec<Card> = (0..4)
-                    .map(|_| {
-                        let mut card = rng.gen_range(0, 52);
-                        while ((1 << card) & used_card_mask) != 0 {
-                            card = rng.gen_range(0, 52);
+        ACTIONS.iter().for_each(|action| {
+            match action {
+                Action::BetRaise(_) => {
+                    // iterate over all bet sizes in this abstraction for this round
+                    let is_bet = self.other_player().wager() == 0;
+                    if is_bet {
+                        for bet_size in &betting_abstraction.bet_sizes[usize::from(self.round)] {
+                            let amt = (bet_size * pot_double) as u32;
+                            let over_threshold = (betting_abstraction.all_in_threshold > 0f64)
+                                && (amt as f64
+                                    > (our_stack_double * betting_abstraction.all_in_threshold));
+                            if over_threshold {
+                                let action = Action::BetRaise(our_stack);
+                                if self.is_action_valid(action) {
+                                    actions.push(action);
+                                }
+                                break;
+                            }
+                            let action = Action::BetRaise(amt);
+                            if self.is_action_valid(action) {
+                                actions.push(action);
+                            }
                         }
-                        used_card_mask |= 1 << card;
-                        card
-                    })
-                    .collect();
-                // assign to players
-                self.players[0].cards[0] = cards[0];
-                self.players[0].cards[1] = cards[1];
-                self.players[1].cards[0] = cards[2];
-                self.players[1].cards[1] = cards[3];
-            }
-            BettingRound::FLOP => {
-                // deal 3 random community cards
-                let mut used_card_mask = self.used_card_mask();
-                // generate 3 unique cards
-                let cards: Vec<Card> = (0..3)
-                    .map(|_| {
-                        let mut card = rng.gen_range(0, 52);
-                        while ((1 << card) & used_card_mask) != 0 {
-                            card = rng.gen_range(0, 52);
+                    } else {
+                        for raise_size in &betting_abstraction.raise_sizes[usize::from(self.round)]
+                        {
+                            let amt = (raise_size * pot_double) as u32;
+                            let over_threshold = (betting_abstraction.all_in_threshold > 0f64)
+                                && (amt as f64
+                                    > (our_stack_double * betting_abstraction.all_in_threshold));
+                            if over_threshold {
+                                let action = Action::BetRaise(our_stack);
+                                if self.is_action_valid(action) {
+                                    actions.push(action);
+                                }
+                                break;
+                            }
+                            let action = Action::BetRaise(amt);
+                            if self.is_action_valid(action) {
+                                actions.push(action);
+                            }
                         }
-                        used_card_mask |= 1 << card;
-                        card
-                    })
-                    .collect();
-                // assign to board
-                self.board[0] = cards[0];
-                self.board[1] = cards[1];
-                self.board[2] = cards[2];
-            }
-            BettingRound::TURN => {
-                // deal 1 random community card
-                let used_card_mask = self.used_card_mask();
-                let mut card = rng.gen_range(0, 52);
-                while ((1 << card) & used_card_mask) != 0 {
-                    card = rng.gen_range(0, 52);
+                    }
                 }
-                self.board[3] = card;
-            }
-            BettingRound::RIVER => {
-                // deal 1 random community card
-                let used_card_mask = self.used_card_mask();
-                let mut card = rng.gen_range(0, 52);
-                while ((1 << card) & used_card_mask) != 0 {
-                    card = rng.gen_range(0, 52);
+                _ => {
+                    if self.is_action_valid(*action) {
+                        actions.push(*action);
+                    }
                 }
-                self.board[4] = card;
             }
-        }
+        });
+
+        actions
     }
-    /// Return a bitmask representing which cards have already been dealt
-    ///
-    /// Used for rejection sampling
-    fn used_card_mask(&self) -> u64 {
-        let mut used_card_mask = 0u64;
-
-        used_card_mask |= 1 << self.players[0].cards[0];
-        used_card_mask |= 1 << self.players[0].cards[1];
-        used_card_mask |= 1 << self.players[1].cards[0];
-        used_card_mask |= 1 << self.players[1].cards[1];
-
-        if self.round == BettingRound::PREFLOP {
-            return used_card_mask;
-        }
-
-        for i in 0..3 {
-            used_card_mask |= 1 << self.board[i];
-        }
-
-        if self.round == BettingRound::TURN {
-            return used_card_mask;
-        }
-
-        used_card_mask |= 1 << self.board[3];
-
-        if self.round == BettingRound::RIVER {
-            return used_card_mask;
-        }
-
-        used_card_mask |= 1 << self.board[4];
-
-        used_card_mask
-    }
-    /// Checks whether an action is valid in the current context
-    ///
-    /// # Arguments
-    ///
-    /// * `action` A poker action
+    /// Returns true if the specified action is valid
+    /// **Note:** For chance actions, it does not consider conflicting cards or number of cards specified
     pub fn is_action_valid(&self, action: Action) -> bool {
         match action {
-            Action::BET(amt) => {
-                // only valid if other player has not bet
-                // and we have chips to bet
-                let valid = (self.other_player().wager == 0)
-                    && (self.current_player().stack > 0)
-                    && (self.current_player().stack >= amt)
-                    && (amt >= BIG_BLIND || amt == self.current_player().stack);
-                valid
+            Action::CheckFold => !self.is_chance(),
+            Action::BetRaise(amt) => {
+                if self.is_chance() {
+                    return false;
+                }
+                let is_bet = self.other_player().wager == 0;
+                if is_bet {
+                    let min_bet = std::cmp::min(BIG_BLIND, self.acting_player().stack);
+                    let max_bet = self.acting_player().stack;
+                    if amt >= min_bet && amt <= max_bet {
+                        return true;
+                    }
+                } else {
+                    let min_raise =
+                        std::cmp::min(2 * self.other_player().wager, self.acting_player().stack);
+                    let max_raise = self.acting_player().stack;
+                    if amt >= min_raise && amt <= max_raise {
+                        return true;
+                    }
+                }
+                false
             }
-            Action::RAISE(amt) => {
-                // only valid if other player has bet
-                // and we have more money than their wager
-                // and we raise about the minimum (2 * other player wager) or we went all in
-                let valid = (self.other_player().wager != 0)
-                    && (self.current_player().stack > self.other_player().wager)
-                    && (self.current_player().stack >= amt)
-                    && (amt >= 2 * self.other_player().wager || amt == self.current_player().stack);
-                valid
+            Action::Call => {
+                if self.other_player().wager > self.acting_player().wager {
+                    return true;
+                }
+                return false;
             }
-            Action::CALL => {
-                // only valid if other player has bet more than us
-                self.other_player().wager > self.current_player().wager
-            }
-            Action::FOLD => {
-                // only valid if other player has bet more than us
-                self.other_player().wager > self.current_player().wager
-            }
-            Action::CHECK => {
-                // only valid if other player has not bet
-                self.current_player().wager >= self.other_player().wager
-            }
+            Action::Chance(_) => self.is_chance(),
         }
     }
-    /// Return the default action (CHECK/FOLD)
-    ///
-    /// This function is used when a player has not acted in time
-    /// or some other error has been encounrered
+    /// Applys an action an returns a new game state
+    /// Assumes that the specified action is valid
+    pub fn apply_action(&self, action: Action) -> GameState {
+        let mut next_state = self.clone();
+        match action {
+            Action::BetRaise(amt) => {
+                next_state.acting_player_mut().wager += amt;
+                next_state.acting_player_mut().stack -= amt;
+                next_state.pot += amt;
+                next_state.current_player = 1 - next_state.current_player;
+                next_state.bets_settled = false;
+            }
+            Action::CheckFold => {
+                let is_fold = next_state.other_player().wager > next_state.acting_player().wager;
+                if is_fold {
+                    let wager_diff =
+                        next_state.other_player().wager - next_state.acting_player().wager;
+                    next_state.acting_player_mut().stack += wager_diff;
+                    next_state.acting_player_mut().has_folded = true;
+                    next_state.pot -= wager_diff;
+                } else {
+                    // if first player checked, then the action is on the next player
+                    // if the second player checked, then the action is on the chance player and the round is incremented
+                    if next_state.current_player == 0 {
+                        next_state.current_player = 1 - next_state.current_player;
+                        next_state.bets_settled = false;
+                    } else {
+                        next_state.current_player = CHANCE_PLAYER;
+                        next_state.bets_settled = true;
+                    }
+                }
+            }
+            Action::Call => {
+                let to_call = next_state.other_player().wager - next_state.acting_player().wager;
+                if to_call > next_state.acting_player().stack {
+                    let diff = to_call - next_state.acting_player().stack;
+                    next_state.pot -= diff;
+                    next_state.acting_player_mut().wager += next_state.acting_player_mut().stack;
+                    next_state.acting_player_mut().stack = 0;
+                    next_state.other_player_mut().wager -= diff;
+                    next_state.other_player_mut().stack += diff;
+                } else {
+                    next_state.acting_player_mut().wager += to_call;
+                    next_state.acting_player_mut().stack -= to_call;
+                }
+                next_state.pot += next_state.acting_player().wager;
+                next_state.current_player = CHANCE_PLAYER;
+                next_state.bets_settled = true;
+                next_state.round = BettingRound::try_from(usize::from(next_state.round) + 1)
+                    .unwrap_or(BettingRound::River);
+            }
+            Action::Chance(cards) => {
+                // deal private cards to players
+                if next_state.is_initial_state() {
+                    let mut i = 0;
+                    for player in 0..2 {
+                        next_state.players[player].cards[0] = cards[i];
+                        next_state.players[player].cards[1] = cards[i + 1];
+                        next_state.used_cards_mask |= (1u64 << cards[i]) | (1u64 << cards[i + 1]);
+                        i += 2;
+                    }
+                } else {
+                    match next_state.round {
+                        BettingRound::Preflop => {
+                            next_state.board[..3].clone_from_slice(&cards[..3]);
+                            for card in &next_state.board[..3] {
+                                next_state.used_cards_mask |= 1u64 << card;
+                            }
+                        }
+                        BettingRound::Flop => {
+                            next_state.board[3] = cards[0];
+                            next_state.used_cards_mask |= 1u64 << cards[0];
+                        }
+                        BettingRound::Turn => {
+                            next_state.board[4] = cards[0];
+                            next_state.used_cards_mask |= 1u64 << cards[0];
+                        }
+                        BettingRound::River => panic!("invalid round"),
+                    };
+                    next_state.round = BettingRound::try_from(usize::from(next_state.round) + 1)
+                        .unwrap_or(BettingRound::River);
+                }
+                next_state.current_player =
+                    if next_state.players[0].wager > next_state.players[1].wager {
+                        1
+                    } else {
+                        0
+                    };
+                next_state.bets_settled = false;
+            }
+        };
+        if next_state.bets_settled {
+            next_state.players[0].wager = 0;
+            next_state.players[1].wager = 0;
+        }
+        next_state.history.push(action);
+        next_state
+    }
+    /// Returns the default player action (i.e.) Check/Fold
     pub fn default_action(&self) -> Action {
-        let actions = self.valid_actions();
-        if actions.contains(&Action::CHECK) {
-            return Action::CHECK;
-        }
-        Action::FOLD
+        assert_ne!(self.current_player, CHANCE_PLAYER);
+        Action::CheckFold
     }
-    /// Returns index of folded player or None
-    pub fn player_folded(&self) -> Option<u8> {
-        if self.current_player().has_folded {
-            return Some(self.current_player);
+    /// Returns the rewards for each player
+    /// Rewards are zero sum
+    /// **Note:** Only call this on a terminal node
+    pub fn rewards(&self) -> [f64; 2] {
+        let mut payouts = [0f64; 2];
+        // TODO unimplemented
+        if self.player_folded() {
+            for (player, payout) in payouts.iter_mut().enumerate() {
+                if self.players[player].has_folded {
+                    *payout = 0f64;
+                } else {
+                    *payout = self.pot as f64;
+                }
+            }
+            return payouts;
         }
-        if self.other_player().has_folded {
-            return Some(1 - self.current_player);
+        // evaluate player hands
+        let mut scores: [u16; 2] = [0; 2];
+        let mut board: Hand = Hand::default();
+        for card in &self.board {
+            board += CARDS[usize::from(*card)];
         }
-        None
+        for (player, score) in scores.iter_mut().enumerate() {
+            let mut player_hand = board;
+            for card in &self.players[player].cards {
+                player_hand += CARDS[usize::from(*card)];
+            }
+            *score = evaluate(&player_hand);
+        }
+        // calc payouts
+        if scores[0] > scores[1] {
+            payouts[0] = self.pot as f64;
+            payouts[1] = 0f64;
+        }
+        if scores[0] < scores[1] {
+            payouts[0] = 0f64;
+            payouts[1] = self.pot as f64;
+        }
+        if scores[0] == scores[1] {
+            payouts[0] = self.pot as f64 * 0.5;
+            payouts[1] = self.pot as f64 * 0.5;
+        }
+
+        payouts
     }
-    /// Return index of all in player or None
-    pub fn player_all_in(&self) -> Option<u8> {
-        if self.current_player().stack == 0 {
-            return Some(self.current_player);
-        }
-        if self.other_player().stack == 0 {
-            return Some(1 - self.current_player);
-        }
-        None
+    /// Returns the reward for a single player
+    pub fn player_reward(&self, player: usize) -> f64 {
+        self.rewards()[player]
     }
-    /// Return true if game is over
-    pub fn is_game_over(&self) -> bool {
-        self.player_folded().is_some()
-            || (self.player_all_in().is_some() && self.bets_settled)
-            || (self.round == BettingRound::RIVER && self.bets_settled)
+    // /// Returns the reward for the specified player idx
+    // /// **Note:** Only call this function on a terminal node.
+    // pub fn player_reward(&self, player: u8) -> f64 {}
+    /// Samples a private card dealing from 2 hand ranges and returns new state
+    pub fn sample_private_chance_from_ranges<R: Rng>(
+        &self,
+        rng: &mut R,
+        hand_ranges: &[HandRange],
+    ) -> Action {
+        assert_eq!(self.current_player, CHANCE_PLAYER);
+        assert_eq!(hand_ranges.len(), 2);
+        let mut used_cards_mask = self.used_cards_mask;
+        let mut cards: [Card; 4] = [52; 4];
+        // give players their cards
+        for (player, hr) in hand_ranges.iter().enumerate() {
+            loop {
+                let combo = hr.hands.choose(rng).unwrap();
+                let combo_mask = (1u64 << combo.0) | (1u64 << combo.1);
+                if (combo_mask & used_cards_mask) == 0 {
+                    used_cards_mask |= combo_mask;
+                    cards[2 * player] = combo.0;
+                    cards[2 * player + 1] = combo.1;
+                    break;
+                }
+            }
+        }
+        Action::Chance(cards)
     }
-    /// Return pot size (# of chips)
+    /// Deals private cards to both players
+    /// Returns a new state
+    pub fn sample_private_chance<R: Rng>(&self, rng: &mut R) -> Action {
+        // give players their cards randomly
+        let mut cards: [Card; 4] = [52; 4];
+        let mut used_cards_mask = self.used_cards_mask;
+        for player in 0..2 {
+            for card in 0..2 {
+                loop {
+                    let c: Card = rng.gen_range(0, 52);
+                    if ((1u64 << c) & used_cards_mask) == 0 {
+                        cards[2 * player + card] = c;
+                        used_cards_mask |= 1u64 << c;
+                        break;
+                    }
+                }
+            }
+        }
+        Action::Chance(cards)
+    }
+    /// Deals postflop rounds and returns new game state
+    pub fn sample_public_chance<R: Rng>(&self, rng: &mut R) -> Action {
+        assert_eq!(self.current_player, CHANCE_PLAYER);
+        let mut cards: [Card; 4] = [52; 4];
+        let mut used_cards_mask = self.used_cards_mask;
+        match self.round {
+            BettingRound::River => panic!("invalid round for public chance"),
+            BettingRound::Preflop => {
+                for i in 0..3 {
+                    loop {
+                        let c: Card = rng.gen_range(0, 52);
+                        if ((1u64 << c) & used_cards_mask) == 0 {
+                            cards[i] = c;
+                            used_cards_mask |= 1u64 << c;
+                            break;
+                        }
+                    }
+                }
+            }
+            BettingRound::Flop => loop {
+                let c: Card = rng.gen_range(0, 52);
+                if ((1u64 << c) & used_cards_mask) == 0 {
+                    cards[0] = c;
+                    used_cards_mask |= 1u64 << c;
+                    break;
+                }
+            },
+            BettingRound::Turn => loop {
+                let c: Card = rng.gen_range(0, 52);
+                if ((1u64 << c) & used_cards_mask) == 0 {
+                    cards[0] = c;
+                    used_cards_mask |= 1u64 << c;
+                    break;
+                }
+            },
+        }
+        Action::Chance(cards)
+    }
+    /// Return the value of the pot
     pub const fn pot(&self) -> u32 {
         self.pot
     }
-    /// Return round
-    pub const fn round(&self) -> BettingRound {
-        self.round
+    /// Returns the history as a string for use as a key
+    pub fn history_string(&self) -> String {
+        self.history
+            .iter()
+            .map(|h| format!("{}", h))
+            .collect::<Vec<String>>()
+            .join("")
     }
-    /// Return index of current player
-    pub const fn current_player_idx(&self) -> u8 {
-        self.current_player
-    }
-    /// Return reference to player at index
-    pub fn player(&self, player_index: usize) -> &PlayerState {
-        &self.players[player_index]
-    }
-    /// Return reference to public cards
+    /// Return board cards
     pub const fn board(&self) -> &[Card; 5] {
         &self.board
     }
-    /// Return bets settled
-    pub fn bets_settled(&self) -> bool {
-        self.bets_settled
+    /// Get current player idx
+    pub const fn current_player(&self) -> i8 {
+        self.current_player
     }
-    /// Return player stacks
-    pub fn stacks(&self) -> [u32; 2] {
-        [self.player(0).stack, self.player(1).stack]
+    pub const fn round(&self) -> BettingRound {
+        self.round
     }
-    /// Return player wagers
-    pub fn wagers(&self) -> [u32; 2] {
-        [self.player(0).wager, self.player(1).wager]
+    /// Returns reference to player at index
+    pub fn player(&self, player: usize) -> &PlayerState {
+        &self.players[player]
     }
-    /// Return a reference to the acting player state
-    pub fn current_player(&self) -> &PlayerState {
-        &self.players[usize::from(self.current_player)]
+    fn acting_player(&self) -> &PlayerState {
+        assert_ne!(self.current_player, CHANCE_PLAYER);
+        &self.players[self.current_player as usize]
     }
-    /// Return a reference to the not acting player state
-    pub fn other_player(&self) -> &PlayerState {
-        &self.players[usize::from(1 - self.current_player)]
+    fn acting_player_mut(&mut self) -> &mut PlayerState {
+        assert_ne!(self.current_player, CHANCE_PLAYER);
+        &mut self.players[self.current_player as usize]
     }
-    /// Return a mutable reference to the acting player state
-    fn current_player_mut(&mut self) -> &mut PlayerState {
-        &mut self.players[usize::from(self.current_player)]
+    fn other_player(&self) -> &PlayerState {
+        assert_ne!(self.current_player, CHANCE_PLAYER);
+        &self.players[1 - self.current_player as usize]
     }
-    /// Return a reference to the not acting player state
     fn other_player_mut(&mut self) -> &mut PlayerState {
-        &mut self.players[usize::from(1 - self.current_player)]
-    }
-    /// Advance the game state to the next betting round
-    pub fn next_round(&self) -> GameState {
-        let mut next_state = *self;
-        // advance round or do nothing if round is river
-        match next_state.round {
-            BettingRound::PREFLOP => {
-                next_state.round = BettingRound::FLOP;
-            }
-            BettingRound::FLOP => {
-                next_state.round = BettingRound::TURN;
-            }
-            BettingRound::TURN => {
-                next_state.round = BettingRound::RIVER;
-            }
-            BettingRound::RIVER => {
-                // game is over, do nothing
-                return next_state;
-            }
-        }
-        next_state.bets_settled = false;
-        next_state.current_player = 0;
-        next_state.current_player_mut().wager = 0;
-        next_state.other_player_mut().wager = 0;
-        next_state
+        assert_ne!(self.current_player, CHANCE_PLAYER);
+        &mut self.players[1 - self.current_player as usize]
     }
 }
 
 #[cfg(test)]
-mod tests {
+mod test {
     use super::*;
+
+    #[test]
+    fn test_new() {
+        let options = GameStateOptions {
+            stacks: [10000, 10000],
+            wagers: [0, 0],
+            pot: 100,
+            initial_board: [0, 1, 2, 3, 4],
+        };
+        let game_state = GameState::new(options);
+        let mut rng = rand::thread_rng();
+        assert_eq!(game_state.is_ok(), true);
+        let mut game_state = game_state.unwrap();
+        assert_eq!(game_state.current_player, CHANCE_PLAYER);
+        assert_eq!(game_state.is_initial_state(), true);
+        assert_eq!(game_state.round, BettingRound::River);
+        game_state = game_state.apply_action(game_state.sample_private_chance(&mut rng));
+        assert_eq!(game_state.current_player, 0);
+    }
+
+    #[test]
+    fn test_sample_private_chance() {
+        let options = GameStateOptions {
+            stacks: [10000, 10000],
+            wagers: [0, 0],
+            pot: 100,
+            initial_board: [0, 1, 2, 52, 52],
+        };
+        let mut rng = rand::thread_rng();
+        let mut game_state = GameState::new(options).unwrap();
+        let private_chance_action = game_state.sample_private_chance(&mut rng);
+        assert!(game_state.is_action_valid(private_chance_action));
+        game_state = game_state.apply_action(private_chance_action);
+        assert_eq!(game_state.current_player, 0);
+        assert_ne!(game_state.used_cards_mask, 0);
+    }
+
+    #[test]
+    fn test_sample_private_chance_from_ranges() {
+        let options = GameStateOptions {
+            stacks: [10000, 10000],
+            wagers: [10, 5],
+            pot: 15,
+            initial_board: [52; 5],
+        };
+        let mut game_state = GameState::new(options).unwrap();
+        let mut rng = rand::thread_rng();
+        let hand_ranges = HandRange::from_strings(vec!["22+".to_string(), "66+".to_string()]);
+        let private_chance_action =
+            game_state.sample_private_chance_from_ranges(&mut rng, &hand_ranges[0..2]);
+        assert!(game_state.is_action_valid(private_chance_action));
+        game_state = game_state.apply_action(private_chance_action);
+        assert_ne!(game_state.used_cards_mask, 0);
+        assert_eq!(game_state.current_player, 1);
+    }
+
+    #[test]
+    fn test_sample_public_chance() {
+        let options = GameStateOptions {
+            stacks: [10000, 10000],
+            wagers: [0, 0],
+            pot: 100,
+            initial_board: [0, 1, 2, 52, 52],
+        };
+        let mut rng = rand::thread_rng();
+        let mut game_state = GameState::new(options).unwrap();
+        let private_chance_action = game_state.sample_private_chance(&mut rng);
+        game_state = game_state.apply_action(private_chance_action);
+        game_state = game_state.apply_action(Action::CheckFold);
+        game_state = game_state.apply_action(Action::CheckFold);
+        assert_eq!(game_state.current_player, CHANCE_PLAYER);
+        let public_chance_action = game_state.sample_public_chance(&mut rng);
+        assert!(game_state.is_action_valid(public_chance_action));
+        if let Action::Chance(cards) = public_chance_action {
+            assert_ne!(cards[0], 52);
+            assert_eq!(cards[1], 52);
+        }
+        game_state = game_state.apply_action(public_chance_action);
+        assert_eq!(game_state.round, BettingRound::Turn);
+    }
+
+    #[test]
+    fn test_is_action_valid() {
+        let options = GameStateOptions {
+            stacks: [10000, 10000],
+            wagers: [0, 0],
+            pot: 100,
+            initial_board: [0, 1, 2, 52, 52],
+        };
+        let mut game_state = GameState::new(options).unwrap();
+        let mut rng = rand::thread_rng();
+        game_state = game_state.apply_action(game_state.sample_private_chance(&mut rng));
+        assert_eq!(game_state.is_action_valid(Action::CheckFold), true);
+        assert_eq!(
+            game_state.is_action_valid(Action::BetRaise(BIG_BLIND)),
+            true
+        );
+        assert_eq!(game_state.is_action_valid(Action::Chance([52; 4])), false);
+        //
+        let options = GameStateOptions {
+            stacks: [10000, 10000],
+            wagers: [10, 5],
+            pot: 100,
+            initial_board: [52; 5],
+        };
+        let mut game_state = GameState::new(options).unwrap();
+        game_state = game_state.apply_action(game_state.sample_private_chance(&mut rng));
+        assert_eq!(game_state.current_player, 1);
+        assert_eq!(game_state.is_action_valid(Action::CheckFold), true);
+        assert_eq!(
+            game_state.is_action_valid(Action::BetRaise(BIG_BLIND)),
+            false
+        );
+        assert_eq!(game_state.is_action_valid(Action::Chance([52; 4])), false);
+        //
+        let options = GameStateOptions {
+            stacks: [10000, 10000],
+            wagers: [10, 5],
+            pot: 100,
+            initial_board: [52; 5],
+        };
+        let mut game_state = GameState::new(options).unwrap();
+        game_state = game_state.apply_action(game_state.sample_private_chance(&mut rng));
+        game_state = game_state.apply_action(Action::BetRaise(10000));
+        game_state = game_state.apply_action(Action::Call);
+        assert_eq!(game_state.current_player, CHANCE_PLAYER);
+    }
+
+    #[test]
+    fn test_is_terminal() {
+        let options = GameStateOptions {
+            stacks: [10000, 10000],
+            wagers: [0, 0],
+            pot: 100,
+            initial_board: [0, 1, 2, 3, 4],
+        };
+        let mut game_state = GameState::new(options).unwrap();
+        let mut rng = rand::thread_rng();
+        assert_eq!(game_state.is_terminal(), false);
+        game_state = game_state.apply_action(game_state.sample_private_chance(&mut rng));
+        assert_eq!(game_state.is_terminal(), false);
+        game_state = game_state.apply_action(Action::CheckFold);
+        game_state = game_state.apply_action(Action::CheckFold);
+        assert_eq!(game_state.is_terminal(), true);
+        // test fold
+        let options = GameStateOptions {
+            stacks: [10000, 10000],
+            wagers: [10, 5],
+            pot: 15,
+            initial_board: [52; 5],
+        };
+        let mut game_state = GameState::new(options).unwrap();
+        game_state = game_state.apply_action(game_state.sample_private_chance(&mut rng));
+        game_state = game_state.apply_action(Action::CheckFold);
+        assert_eq!(game_state.is_terminal(), true);
+    }
 }

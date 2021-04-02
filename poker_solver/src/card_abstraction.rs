@@ -37,21 +37,24 @@ impl CardAbstraction {
     /// Loads an abstraction from a file
     ///
     /// # Example
+    /// **Note**: you must have the abstractions file located in the `data` folder
     /// ```
+    /// use poker_solver::card_abstraction::{CardAbstraction, CardAbstractionOptions};
+    /// use poker_solver::round::BettingRound;
     /// let options = CardAbstractionOptions {
     ///   abs_type: "emd".to_string(),
     ///   k: 5000,
     ///   d: 50,
-    ///   round: BettingRound::FLOP,
+    ///   round: BettingRound::Flop,
     /// };
     /// let card_abs = CardAbstraction::load(options).unwrap();
     /// ```
     pub fn load(options: CardAbstractionOptions) -> Result<Self, Box<dyn Error>> {
         let indexer = match options.round {
-            BettingRound::PREFLOP => HandIndexer::init(1, vec![2]),
-            BettingRound::FLOP => HandIndexer::init(2, vec![2, 3]),
-            BettingRound::TURN => HandIndexer::init(2, vec![2, 4]),
-            BettingRound::RIVER => HandIndexer::init(2, vec![2, 5]),
+            BettingRound::Preflop => HandIndexer::init(1, vec![2]),
+            BettingRound::Flop => HandIndexer::init(2, vec![2, 3]),
+            BettingRound::Turn => HandIndexer::init(2, vec![2, 4]),
+            BettingRound::River => HandIndexer::init(2, vec![2, 5]),
         };
         let round = usize::from(options.round);
         let round_size = indexer.size(if round == 0 { 0 } else { 1 }) as usize;
@@ -117,7 +120,7 @@ mod tests {
                 abs_type: "emd".to_string(),
                 k: 5000,
                 d: 50,
-                round: BettingRound::FLOP,
+                round: BettingRound::Flop,
             };
             let card_abs = CardAbstraction::load(options).unwrap();
             assert_eq!(card_abs.get(0), 412);
@@ -134,7 +137,7 @@ mod tests {
                 abs_type: "emd".to_string(),
                 k: 5000,
                 d: 50,
-                round: BettingRound::TURN,
+                round: BettingRound::Turn,
             };
             let card_abs = CardAbstraction::load(options).unwrap();
             assert_eq!(card_abs.get(0), 3200);
@@ -151,7 +154,7 @@ mod tests {
                 abs_type: "ochs".to_string(),
                 k: 5000,
                 d: 8,
-                round: BettingRound::RIVER,
+                round: BettingRound::River,
             };
             let card_abs = CardAbstraction::load(options).unwrap();
             assert_eq!(card_abs.get(0), 4233);

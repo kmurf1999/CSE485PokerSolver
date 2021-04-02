@@ -16,25 +16,21 @@ pub mod card;
 /// Loads card abstraction files into memory
 pub mod card_abstraction;
 /// Defines how to represent poker messages in json
-pub mod codec;
-/// Used for iterating over card combinations
-pub mod combos;
+// pub mod codec;
 pub mod constants;
-/// A tree node for representing a poker game tree
-pub mod game_node;
-/// Monte-carlo counter factual regret minimization implementation
-pub mod mccfr;
+pub mod infoset;
 /// Represents a betting round in poker
 pub mod round;
 /// postflop solver
 pub mod solver;
-/// Maps sparse arrays to dense to save memory
-pub mod sparse_and_dense;
 /// Structures and methods for dealing with game state in texas holdem
 pub mod state;
-/// A tree structure implemented in rust
-pub mod tree;
-/// Methods for building poker game trees
-pub mod tree_builder;
 
-pub mod infoset;
+pub mod combos;
+
+pub fn normalize(pdf: &mut Vec<f64>) {
+    let sum: f64 = pdf.iter().sum();
+    for prob in pdf.iter_mut() {
+        *prob /= sum;
+    }
+}
