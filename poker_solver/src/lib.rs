@@ -26,10 +26,15 @@ pub mod solver;
 /// Structures and methods for dealing with game state in texas holdem
 pub mod state;
 
+pub mod best_response;
+
 pub mod combos;
 
 pub fn normalize(pdf: &mut Vec<f64>) {
     let sum: f64 = pdf.iter().sum();
+    if sum <= 0.0 {
+        return;
+    }
     for prob in pdf.iter_mut() {
         *prob /= sum;
     }

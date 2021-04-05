@@ -2,7 +2,7 @@ use crate::round::BettingRound;
 use rust_poker::read_write::VecIO;
 use rust_poker::HandIndexer;
 use std::error::Error;
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::result::Result;
 
 /// Options to load Card abstraction
@@ -31,6 +31,18 @@ pub struct CardAbstraction {
     use_short: bool,
     pub short_buckets: Vec<u16>,
     pub long_buckets: Vec<u32>,
+}
+
+impl Default for CardAbstraction {
+    fn default() -> CardAbstraction {
+        CardAbstraction {
+            round_size: 0,
+            n_buckets: 0,
+            use_short: false,
+            short_buckets: Vec::new(),
+            long_buckets: Vec::new(),
+        }
+    }
 }
 
 impl CardAbstraction {

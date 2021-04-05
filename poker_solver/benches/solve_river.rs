@@ -1,6 +1,7 @@
 #![feature(test)]
 
 extern crate test;
+use poker_solver::best_response::run_local_br;
 use poker_solver::betting_abstraction::BettingAbstraction;
 use poker_solver::solver::{Solver, SolverOptions};
 use poker_solver::state::{GameState, GameStateOptions};
@@ -88,6 +89,33 @@ fn bench_run_10000(b: &mut Bencher) -> Result<(), Box<dyn Error>> {
 
     b.iter(|| {
         solver.run(10000);
+    });
+    Ok(())
+}
+
+#[bench]
+fn bench_run_br_1(b: &mut Bencher) -> Result<(), Box<dyn Error>> {
+    // 3,002,107 ns/iter (+/- 619,469)
+    let initial_state = GameState::new(GameStateOptions {
+        stacks: [10000, 10000],
+        initial_board: [0, 12, 14, 50, 6],
+        wagers: [0, 0],
+        pot: 1000,
+    })?;
+    let betting_abstraction = BettingAbstraction {
+        bet_sizes: [vec![], vec![], vec![], vec![1.0]],
+        raise_sizes: [vec![], vec![], vec![], vec![1.0]],
+        all_in_threshold: 0f64,
+    };
+    let mut solver = Solver::init(SolverOptions {
+        initial_state,
+        hand_ranges: [String::from("random"), String::from("random")],
+        betting_abstraction,
+        card_abstraction: vec![String::from("null")],
+    })?;
+    solver.run(100_000);
+    b.iter(|| {
+        run_local_br(&solver, 100);
     });
     Ok(())
 }

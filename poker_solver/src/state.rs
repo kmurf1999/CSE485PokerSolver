@@ -16,8 +16,9 @@ use rust_poker::hand_range::HandRange;
 /// We'll use this for now to define min-bets
 /// this will be changed in the future
 const BIG_BLIND: u32 = 10;
-const SMALL_BLIND: u32 = 5;
+// const SMALL_BLIND: u32 = 5;
 const CHANCE_PLAYER: i8 = -1;
+const TERMINAL_PLAYER: i8 = -2;
 
 /// Represents the state of a single player in a HUNL Texas Holdem Game
 #[derive(Debug, Copy, Clone)]
@@ -119,9 +120,7 @@ pub struct GameState {
     /// mask of used cards used for sampling
     used_cards_mask: u64,
     /// game history
-    history: Vec<Action>,
-    /// Has the action at this round settled
-    bets_settled: bool,
+    history: String,
 }
 
 impl Clone for GameState {
@@ -132,7 +131,6 @@ impl Clone for GameState {
             players: self.players,
             current_player: self.current_player,
             board: self.board,
-            bets_settled: false,
             used_cards_mask: self.used_cards_mask,
             history: self.history.clone(),
         }
@@ -183,15 +181,14 @@ impl GameState {
             pot: options.pot,
             players,
             current_player: CHANCE_PLAYER,
-            bets_settled: false,
             board,
             used_cards_mask,
-            history: Vec::new(),
+            history: String::new(),
         })
     }
     /// Return true is this is a terminal state
-    pub fn is_terminal(&self) -> bool {
-        (self.bets_settled && self.round == BettingRound::River) || self.player_folded()
+    pub const fn is_terminal(&self) -> bool {
+        self.current_player() == TERMINAL_PLAYER
     }
     /// Return true if this is an action node
     pub const fn is_action(&self) -> bool {
@@ -278,7 +275,8 @@ impl GameState {
     /// **Note:** For chance actions, it does not consider conflicting cards or number of cards specified
     pub fn is_action_valid(&self, action: Action) -> bool {
         match action {
-            Action::CheckFold => !self.is_chance(),
+            Action::Fold => self.other_player().wager > self.acting_player().wager,
+            Action::CheckCall => !self.is_chance(),
             Action::BetRaise(amt) => {
                 if self.is_chance() {
                     return false;
@@ -300,12 +298,6 @@ impl GameState {
                 }
                 false
             }
-            Action::Call => {
-                if self.other_player().wager > self.acting_player().wager {
-                    return true;
-                }
-                return false;
-            }
             Action::Chance(_) => self.is_chance(),
         }
     }
@@ -315,50 +307,64 @@ impl GameState {
         let mut next_state = self.clone();
         match action {
             Action::BetRaise(amt) => {
+                if next_state.other_player().wager > next_state.acting_player().wager {
+                    next_state.history.push_str(&format!("R({})", amt));
+                } else {
+                    next_state.history.push_str(&format!("B({})", amt));
+                }
                 next_state.acting_player_mut().wager += amt;
                 next_state.acting_player_mut().stack -= amt;
                 next_state.pot += amt;
                 next_state.current_player = 1 - next_state.current_player;
-                next_state.bets_settled = false;
             }
-            Action::CheckFold => {
-                let is_fold = next_state.other_player().wager > next_state.acting_player().wager;
-                if is_fold {
-                    let wager_diff =
+            Action::Fold => {
+                let wager_diff = next_state.other_player().wager - next_state.acting_player().wager;
+                next_state.acting_player_mut().stack += wager_diff;
+                next_state.acting_player_mut().has_folded = true;
+                next_state.pot -= wager_diff;
+                next_state.current_player = TERMINAL_PLAYER;
+                next_state.history.push('F');
+            }
+            Action::CheckCall => {
+                let is_call = next_state.other_player().wager > next_state.acting_player().wager;
+                if is_call {
+                    let to_call =
                         next_state.other_player().wager - next_state.acting_player().wager;
-                    next_state.acting_player_mut().stack += wager_diff;
-                    next_state.acting_player_mut().has_folded = true;
-                    next_state.pot -= wager_diff;
+                    if to_call > next_state.acting_player().stack {
+                        let diff = to_call - next_state.acting_player().stack;
+                        next_state.pot -= diff;
+                        next_state.acting_player_mut().wager +=
+                            next_state.acting_player_mut().stack;
+                        next_state.acting_player_mut().stack = 0;
+                        next_state.other_player_mut().wager -= diff;
+                        next_state.other_player_mut().stack += diff;
+                    } else {
+                        next_state.acting_player_mut().wager += to_call;
+                        next_state.acting_player_mut().stack -= to_call;
+                    }
+                    next_state.pot += next_state.acting_player().wager;
+                    if next_state.round == BettingRound::River {
+                        next_state.current_player = TERMINAL_PLAYER;
+                    } else {
+                        next_state.current_player = CHANCE_PLAYER;
+                    }
+                    next_state.players[0].wager = 0;
+                    next_state.players[1].wager = 0;
+                    next_state.history.push('C');
                 } else {
                     // if first player checked, then the action is on the next player
                     // if the second player checked, then the action is on the chance player and the round is incremented
                     if next_state.current_player == 0 {
                         next_state.current_player = 1 - next_state.current_player;
-                        next_state.bets_settled = false;
                     } else {
-                        next_state.current_player = CHANCE_PLAYER;
-                        next_state.bets_settled = true;
+                        if next_state.round == BettingRound::River {
+                            next_state.current_player = TERMINAL_PLAYER;
+                        } else {
+                            next_state.current_player = CHANCE_PLAYER;
+                        }
                     }
+                    next_state.history.push('X');
                 }
-            }
-            Action::Call => {
-                let to_call = next_state.other_player().wager - next_state.acting_player().wager;
-                if to_call > next_state.acting_player().stack {
-                    let diff = to_call - next_state.acting_player().stack;
-                    next_state.pot -= diff;
-                    next_state.acting_player_mut().wager += next_state.acting_player_mut().stack;
-                    next_state.acting_player_mut().stack = 0;
-                    next_state.other_player_mut().wager -= diff;
-                    next_state.other_player_mut().stack += diff;
-                } else {
-                    next_state.acting_player_mut().wager += to_call;
-                    next_state.acting_player_mut().stack -= to_call;
-                }
-                next_state.pot += next_state.acting_player().wager;
-                next_state.current_player = CHANCE_PLAYER;
-                next_state.bets_settled = true;
-                next_state.round = BettingRound::try_from(usize::from(next_state.round) + 1)
-                    .unwrap_or(BettingRound::River);
             }
             Action::Chance(cards) => {
                 // deal private cards to players
@@ -391,26 +397,30 @@ impl GameState {
                     next_state.round = BettingRound::try_from(usize::from(next_state.round) + 1)
                         .unwrap_or(BettingRound::River);
                 }
-                next_state.current_player =
-                    if next_state.players[0].wager > next_state.players[1].wager {
-                        1
+                if next_state.player_allin() {
+                    next_state.current_player = if next_state.round == BettingRound::River {
+                        TERMINAL_PLAYER
                     } else {
-                        0
+                        CHANCE_PLAYER
                     };
-                next_state.bets_settled = false;
+                } else if next_state.players[0].wager > next_state.players[1].wager {
+                    next_state.current_player = 1;
+                } else {
+                    next_state.current_player = 0;
+                };
+                next_state.history.push('D');
             }
         };
-        if next_state.bets_settled {
-            next_state.players[0].wager = 0;
-            next_state.players[1].wager = 0;
-        }
-        next_state.history.push(action);
         next_state
     }
     /// Returns the default player action (i.e.) Check/Fold
     pub fn default_action(&self) -> Action {
         assert_ne!(self.current_player, CHANCE_PLAYER);
-        Action::CheckFold
+        if self.other_player().wager > 0 {
+            Action::Fold
+        } else {
+            Action::CheckCall
+        }
     }
     /// Returns the rewards for each player
     /// Rewards are zero sum
@@ -421,9 +431,9 @@ impl GameState {
         if self.player_folded() {
             for (player, payout) in payouts.iter_mut().enumerate() {
                 if self.players[player].has_folded {
-                    *payout = 0f64;
+                    *payout = -0.5 * self.pot as f64;
                 } else {
-                    *payout = self.pot as f64;
+                    *payout = 0.5 * self.pot as f64;
                 }
             }
             return payouts;
@@ -443,16 +453,16 @@ impl GameState {
         }
         // calc payouts
         if scores[0] > scores[1] {
-            payouts[0] = self.pot as f64;
-            payouts[1] = 0f64;
+            payouts[0] = 0.5 * self.pot as f64;
+            payouts[1] = -0.5 * self.pot as f64;
         }
         if scores[0] < scores[1] {
-            payouts[0] = 0f64;
-            payouts[1] = self.pot as f64;
+            payouts[0] = -0.5 * self.pot as f64;
+            payouts[1] = 0.5 * self.pot as f64;
         }
         if scores[0] == scores[1] {
-            payouts[0] = self.pot as f64 * 0.5;
-            payouts[1] = self.pot as f64 * 0.5;
+            payouts[0] = 0.0;
+            payouts[1] = 0.0;
         }
 
         payouts
@@ -517,11 +527,11 @@ impl GameState {
         match self.round {
             BettingRound::River => panic!("invalid round for public chance"),
             BettingRound::Preflop => {
-                for i in 0..3 {
+                for card in &mut cards[0..3] {
                     loop {
                         let c: Card = rng.gen_range(0, 52);
                         if ((1u64 << c) & used_cards_mask) == 0 {
-                            cards[i] = c;
+                            *card = c;
                             used_cards_mask |= 1u64 << c;
                             break;
                         }
@@ -552,12 +562,8 @@ impl GameState {
         self.pot
     }
     /// Returns the history as a string for use as a key
-    pub fn history_string(&self) -> String {
-        self.history
-            .iter()
-            .map(|h| format!("{}", h))
-            .collect::<Vec<String>>()
-            .join("")
+    pub fn history_string(&self) -> &str {
+        &self.history
     }
     /// Return board cards
     pub const fn board(&self) -> &[Card; 5] {
@@ -574,7 +580,7 @@ impl GameState {
     pub fn player(&self, player: usize) -> &PlayerState {
         &self.players[player]
     }
-    fn acting_player(&self) -> &PlayerState {
+    pub fn acting_player(&self) -> &PlayerState {
         assert_ne!(self.current_player, CHANCE_PLAYER);
         &self.players[self.current_player as usize]
     }
@@ -582,7 +588,7 @@ impl GameState {
         assert_ne!(self.current_player, CHANCE_PLAYER);
         &mut self.players[self.current_player as usize]
     }
-    fn other_player(&self) -> &PlayerState {
+    pub fn other_player(&self) -> &PlayerState {
         assert_ne!(self.current_player, CHANCE_PLAYER);
         &self.players[1 - self.current_player as usize]
     }
@@ -663,8 +669,8 @@ mod test {
         let mut game_state = GameState::new(options).unwrap();
         let private_chance_action = game_state.sample_private_chance(&mut rng);
         game_state = game_state.apply_action(private_chance_action);
-        game_state = game_state.apply_action(Action::CheckFold);
-        game_state = game_state.apply_action(Action::CheckFold);
+        game_state = game_state.apply_action(Action::CheckCall);
+        game_state = game_state.apply_action(Action::CheckCall);
         assert_eq!(game_state.current_player, CHANCE_PLAYER);
         let public_chance_action = game_state.sample_public_chance(&mut rng);
         assert!(game_state.is_action_valid(public_chance_action));
@@ -687,7 +693,7 @@ mod test {
         let mut game_state = GameState::new(options).unwrap();
         let mut rng = rand::thread_rng();
         game_state = game_state.apply_action(game_state.sample_private_chance(&mut rng));
-        assert_eq!(game_state.is_action_valid(Action::CheckFold), true);
+        assert_eq!(game_state.is_action_valid(Action::CheckCall), true);
         assert_eq!(
             game_state.is_action_valid(Action::BetRaise(BIG_BLIND)),
             true
@@ -703,7 +709,7 @@ mod test {
         let mut game_state = GameState::new(options).unwrap();
         game_state = game_state.apply_action(game_state.sample_private_chance(&mut rng));
         assert_eq!(game_state.current_player, 1);
-        assert_eq!(game_state.is_action_valid(Action::CheckFold), true);
+        assert_eq!(game_state.is_action_valid(Action::CheckCall), true);
         assert_eq!(
             game_state.is_action_valid(Action::BetRaise(BIG_BLIND)),
             false
@@ -719,7 +725,7 @@ mod test {
         let mut game_state = GameState::new(options).unwrap();
         game_state = game_state.apply_action(game_state.sample_private_chance(&mut rng));
         game_state = game_state.apply_action(Action::BetRaise(10000));
-        game_state = game_state.apply_action(Action::Call);
+        game_state = game_state.apply_action(Action::CheckCall);
         assert_eq!(game_state.current_player, CHANCE_PLAYER);
     }
 
@@ -736,19 +742,19 @@ mod test {
         assert_eq!(game_state.is_terminal(), false);
         game_state = game_state.apply_action(game_state.sample_private_chance(&mut rng));
         assert_eq!(game_state.is_terminal(), false);
-        game_state = game_state.apply_action(Action::CheckFold);
-        game_state = game_state.apply_action(Action::CheckFold);
+        game_state = game_state.apply_action(Action::CheckCall);
+        game_state = game_state.apply_action(Action::CheckCall);
         assert_eq!(game_state.is_terminal(), true);
         // test fold
         let options = GameStateOptions {
             stacks: [10000, 10000],
             wagers: [10, 5],
             pot: 15,
-            initial_board: [52; 5],
+            initial_board: [0, 1, 2, 3, 4],
         };
         let mut game_state = GameState::new(options).unwrap();
         game_state = game_state.apply_action(game_state.sample_private_chance(&mut rng));
-        game_state = game_state.apply_action(Action::CheckFold);
+        game_state = game_state.apply_action(Action::CheckCall);
         assert_eq!(game_state.is_terminal(), true);
     }
 }

@@ -143,8 +143,8 @@ impl InfosetTable {
             Entry::Vacant(v) => v.insert(Infoset::init(n_actions)),
         }
     }
-    pub fn get(&mut self, key: String) -> Option<&mut Infoset> {
-        self.table.get_mut(&key)
+    pub fn get(&self, key: String) -> Option<&Infoset> {
+        self.table.get(&key)
     }
     pub fn len(&self) -> usize {
         self.table.len()
@@ -343,7 +343,6 @@ mod tests {
         let mut infosets = InfosetTable::default();
 
         for i in 0..1000 {
-            let iset = Infoset::init(5);
             infosets.get_or_insert(i.to_string(), 5);
         }
 

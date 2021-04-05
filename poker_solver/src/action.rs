@@ -1,13 +1,12 @@
 use serde::{Deserialize, Serialize};
-use std::fmt;
 
 /// Represents a player action
 #[derive(Debug, Copy, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub enum Action {
     /// Check/Fold action
-    CheckFold,
+    Fold,
     /// Call a Bet or raise
-    Call,
+    CheckCall,
     /// Bet action
     /// value is in chips
     /// Raise is a "by value"
@@ -20,34 +19,15 @@ pub enum Action {
 
 /// Sinces check/fold & call actions cannot appear together
 /// and they always appear first, we can easily index them
-pub const CHECK_FOLD_IDX: usize = 0;
-pub const CALL_IDX: usize = 1;
-
-/// For printing actions to terminal
-///
-/// # Example
-///
-/// ```
-/// use poker_solver::action::Action;
-/// println!("{}", Action::Fold);
-/// ```
-impl fmt::Display for Action {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        return match self {
-            Action::BetRaise(size) => write!(f, "B({})", size),
-            Action::CheckFold => write!(f, "F"),
-            Action::Call => write!(f, "C"),
-            Action::Chance(_) => write!(f, "D"),
-        };
-    }
-}
+pub const CHECK_CALL_IDX: usize = 0;
+pub const FOLD_IDX: usize = 1;
 
 /// List of available actions
 ///
 /// Note: Bet and Raise sizes could be invalid
 pub static ACTIONS: &[Action; 4] = &[
-    Action::CheckFold,
-    Action::Call,
+    Action::CheckCall,
+    Action::Fold,
     Action::BetRaise(1),
     Action::Chance([52; 4]),
 ];
