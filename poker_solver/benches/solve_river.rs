@@ -16,7 +16,7 @@ fn bench_init(b: &mut Bencher) -> Result<(), Box<dyn Error>> {
     let initial_state = GameState::new(GameStateOptions {
         stacks: [10000, 10000],
         initial_board: [0, 1, 2, 3, 4],
-        wagers: [0, 0],
+        blinds: [10, 5],
         pot: 1000,
     })?;
 
@@ -44,7 +44,7 @@ fn bench_run_1(b: &mut Bencher) -> Result<(), Box<dyn Error>> {
     let initial_state = GameState::new(GameStateOptions {
         stacks: [10000, 10000],
         initial_board: [0, 1, 2, 3, 4],
-        wagers: [0, 0],
+        blinds: [10, 5],
         pot: 1000,
     })?;
     let betting_abstraction = BettingAbstraction {
@@ -72,7 +72,7 @@ fn bench_run_10000(b: &mut Bencher) -> Result<(), Box<dyn Error>> {
     let initial_state = GameState::new(GameStateOptions {
         stacks: [10000, 10000],
         initial_board: [0, 1, 2, 3, 4],
-        wagers: [0, 0],
+        blinds: [10, 5],
         pot: 1000,
     })?;
     let betting_abstraction = BettingAbstraction {
@@ -99,7 +99,7 @@ fn bench_run_br_1(b: &mut Bencher) -> Result<(), Box<dyn Error>> {
     let initial_state = GameState::new(GameStateOptions {
         stacks: [10000, 10000],
         initial_board: [0, 12, 14, 50, 6],
-        wagers: [0, 0],
+        blinds: [10, 5],
         pot: 1000,
     })?;
     let betting_abstraction = BettingAbstraction {

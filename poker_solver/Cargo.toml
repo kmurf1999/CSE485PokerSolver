@@ -13,8 +13,8 @@ members = [
     "client"
 ]
 
-[target.'cfg(any(windows, unix))']
-rustflags = ["-C target-cpu=native"]
+# [target.'cfg(any(windows, unix))']
+# rustflags = ["-C target-cpu=native"]
 
 [profile.release]
 lto = true

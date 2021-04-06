@@ -1,3 +1,7 @@
+//!
+//! `GameState` is used to represent the state of a HUNL Texas Holdem' Poker game
+//! `GameState` is meant to be immutable.  To transition between states you must call the `apply_action` function with a valid action.  This will return a new state
+//!
 use crate::action::{Action, ACTIONS};
 use crate::betting_abstraction::BettingAbstraction;
 use crate::card::Card;
@@ -7,16 +11,11 @@ use crate::round::BettingRound;
 // use rand::prelude::*;
 use rand::prelude::SliceRandom;
 use rand::Rng;
+use rust_poker::hand_evaluator::{evaluate, Hand, CARDS};
+use rust_poker::hand_range::HandRange;
 use std::result::Result;
 use thiserror::Error as ThisError;
 
-use rust_poker::hand_evaluator::{evaluate, Hand, CARDS};
-use rust_poker::hand_range::HandRange;
-
-/// We'll use this for now to define min-bets
-/// this will be changed in the future
-const BIG_BLIND: u32 = 10;
-// const SMALL_BLIND: u32 = 5;
 const CHANCE_PLAYER: i8 = -1;
 const TERMINAL_PLAYER: i8 = -2;
 
@@ -78,13 +77,42 @@ impl PlayerState {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
+/// Options for creating inital game state
+///
+/// # Preflop Example
+/// ```
+/// use poker_solver::state::{GameState, GameStateOptions};
+/// let options = GameStateOptions {
+///   stacks: [10000, 2],
+///   blinds: [10, 5],
+///   pot: 0,
+///   initial_board: [52; 5]
+/// };
+/// let state = GameState::init(options);
+/// assert_eq!(state.pot(), 15);
+/// ```
+///
+/// # Postflop Example
+/// ```
+/// use poker_solver::state::{GameState, GameStateOptions};
+/// let options = GameStateOptions {
+///   stacks: [10000, 2],
+///   blinds: [10, 5],
+///   pot: 100,
+///   initial_board: [0, 1, 2, 52, 52]
+/// };
+/// let state = GameState::init(options);
+/// assert_eq!(state.pot(), 100);
+/// ```
 pub struct GameStateOptions {
     /// initial stack sizes for each player
     /// stacks must be greater than zero
     pub stacks: [u32; 2],
-    /// initial wagers for each player
-    pub wagers: [u32; 2],
+    /// The blinds for each player (Big blind comes first)
+    /// if Betting round is preflop, blinds will be applied
+    /// the first blind is used to determine min raise
+    pub blinds: [u32; 2],
     /// initial pot size
     /// pot should be greater than or equal to the sum of all wagers
     pub pot: u32,
@@ -112,6 +140,8 @@ pub struct GameState {
     pot: u32,
     /// The state of each player
     players: [PlayerState; 2],
+    /// The blinds for each player big blind comes first
+    blinds: [u32; 2],
     /// index of current player, if the index == -1, the current player is the chance player
     current_player: i8,
     /// Community Cards
@@ -129,6 +159,7 @@ impl Clone for GameState {
             round: self.round,
             pot: self.pot,
             players: self.players,
+            blinds: self.blinds,
             current_player: self.current_player,
             board: self.board,
             used_cards_mask: self.used_cards_mask,
@@ -144,15 +175,15 @@ impl GameState {
         let mut board = [52; 5];
         let mut board_card_count = 0;
         let mut used_cards_mask = 0u64;
+        let mut pot = options.pot;
         // copy board cards
         for i in 0..5 {
-            if options.initial_board[i] < 52 {
-                board_card_count += 1;
-                board[i] = options.initial_board[i];
-                used_cards_mask |= 1u64 << board[i];
-            } else {
+            if options.initial_board[i] >= 52 {
                 break;
             }
+            board_card_count += 1;
+            board[i] = options.initial_board[i];
+            used_cards_mask |= 1u64 << board[i];
         }
         let round = match board_card_count {
             0 => BettingRound::Preflop,
@@ -164,21 +195,23 @@ impl GameState {
             }
         };
         let mut players = [PlayerState::default(); 2];
-        let mut wager_sum = 0;
         for i in 0..2 {
             players[i].stack = options.stacks[i];
-            players[i].wager = options.wagers[i];
-            wager_sum += players[i].wager;
             if players[i].stack == 0 {
                 return Err(GameStateError::InvalidStacks);
             }
         }
-        if wager_sum > options.pot {
-            return Err(GameStateError::InvalidPot);
+        if round == BettingRound::Preflop {
+            for i in 0..2 {
+                players[i].wager += std::cmp::min(options.blinds[i], players[i].stack);
+                players[i].stack -= players[i].wager;
+                pot += players[i].wager;
+            }
         }
         Ok(GameState {
             round,
-            pot: options.pot,
+            pot,
+            blinds: options.blinds,
             players,
             current_player: CHANCE_PLAYER,
             board,
@@ -283,7 +316,7 @@ impl GameState {
                 }
                 let is_bet = self.other_player().wager == 0;
                 if is_bet {
-                    let min_bet = std::cmp::min(BIG_BLIND, self.acting_player().stack);
+                    let min_bet = std::cmp::min(self.blinds[0], self.acting_player().stack);
                     let max_bet = self.acting_player().stack;
                     if amt >= min_bet && amt <= max_bet {
                         return true;
@@ -332,6 +365,7 @@ impl GameState {
                         next_state.other_player().wager - next_state.acting_player().wager;
                     if to_call > next_state.acting_player().stack {
                         let diff = to_call - next_state.acting_player().stack;
+                        next_state.pot += next_state.acting_player().stack;
                         next_state.pot -= diff;
                         next_state.acting_player_mut().wager +=
                             next_state.acting_player_mut().stack;
@@ -341,9 +375,15 @@ impl GameState {
                     } else {
                         next_state.acting_player_mut().wager += to_call;
                         next_state.acting_player_mut().stack -= to_call;
+                        next_state.pot += to_call;
                     }
-                    next_state.pot += next_state.acting_player().wager;
-                    if next_state.round == BettingRound::River {
+                    // allow the big blind to bet preflop if other player just calls
+                    if next_state.round == BettingRound::Preflop
+                        && next_state.current_player > 0
+                        && next_state.history == "D"
+                    {
+                        next_state.current_player = 0;
+                    } else if next_state.round == BettingRound::River {
                         next_state.current_player = TERMINAL_PLAYER;
                     } else {
                         next_state.current_player = CHANCE_PLAYER;
@@ -354,14 +394,13 @@ impl GameState {
                 } else {
                     // if first player checked, then the action is on the next player
                     // if the second player checked, then the action is on the chance player and the round is incremented
-                    if next_state.current_player == 0 {
+                    // preflop, the big blind is last to act
+                    if next_state.current_player == 0 && next_state.round != BettingRound::Preflop {
                         next_state.current_player = 1 - next_state.current_player;
+                    } else if next_state.round == BettingRound::River {
+                        next_state.current_player = TERMINAL_PLAYER;
                     } else {
-                        if next_state.round == BettingRound::River {
-                            next_state.current_player = TERMINAL_PLAYER;
-                        } else {
-                            next_state.current_player = CHANCE_PLAYER;
-                        }
+                        next_state.current_player = CHANCE_PLAYER;
                     }
                     next_state.history.push('X');
                 }
@@ -606,7 +645,7 @@ mod test {
     fn test_new() {
         let options = GameStateOptions {
             stacks: [10000, 10000],
-            wagers: [0, 0],
+            blinds: [10, 5],
             pot: 100,
             initial_board: [0, 1, 2, 3, 4],
         };
@@ -625,7 +664,7 @@ mod test {
     fn test_sample_private_chance() {
         let options = GameStateOptions {
             stacks: [10000, 10000],
-            wagers: [0, 0],
+            blinds: [10, 5],
             pot: 100,
             initial_board: [0, 1, 2, 52, 52],
         };
@@ -642,8 +681,8 @@ mod test {
     fn test_sample_private_chance_from_ranges() {
         let options = GameStateOptions {
             stacks: [10000, 10000],
-            wagers: [10, 5],
-            pot: 15,
+            blinds: [10, 5],
+            pot: 0,
             initial_board: [52; 5],
         };
         let mut game_state = GameState::new(options).unwrap();
@@ -661,7 +700,7 @@ mod test {
     fn test_sample_public_chance() {
         let options = GameStateOptions {
             stacks: [10000, 10000],
-            wagers: [0, 0],
+            blinds: [10, 5],
             pot: 100,
             initial_board: [0, 1, 2, 52, 52],
         };
@@ -683,78 +722,98 @@ mod test {
     }
 
     #[test]
-    fn test_is_action_valid() {
+    fn test_preflop() {
         let options = GameStateOptions {
             stacks: [10000, 10000],
-            wagers: [0, 0],
-            pot: 100,
-            initial_board: [0, 1, 2, 52, 52],
+            blinds: [10, 5],
+            pot: 0,
+            initial_board: [52; 5],
         };
-        let mut game_state = GameState::new(options).unwrap();
         let mut rng = rand::thread_rng();
-        game_state = game_state.apply_action(game_state.sample_private_chance(&mut rng));
-        assert_eq!(game_state.is_action_valid(Action::CheckCall), true);
-        assert_eq!(
-            game_state.is_action_valid(Action::BetRaise(BIG_BLIND)),
-            true
-        );
-        assert_eq!(game_state.is_action_valid(Action::Chance([52; 4])), false);
-        //
-        let options = GameStateOptions {
-            stacks: [10000, 10000],
-            wagers: [10, 5],
-            pot: 100,
-            initial_board: [52; 5],
-        };
+        // test checking through preflop
         let mut game_state = GameState::new(options).unwrap();
         game_state = game_state.apply_action(game_state.sample_private_chance(&mut rng));
-        assert_eq!(game_state.current_player, 1);
-        assert_eq!(game_state.is_action_valid(Action::CheckCall), true);
-        assert_eq!(
-            game_state.is_action_valid(Action::BetRaise(BIG_BLIND)),
-            false
-        );
-        assert_eq!(game_state.is_action_valid(Action::Chance([52; 4])), false);
-        //
-        let options = GameStateOptions {
-            stacks: [10000, 10000],
-            wagers: [10, 5],
-            pot: 100,
-            initial_board: [52; 5],
-        };
-        let mut game_state = GameState::new(options).unwrap();
-        game_state = game_state.apply_action(game_state.sample_private_chance(&mut rng));
-        game_state = game_state.apply_action(Action::BetRaise(10000));
+        assert_eq!(game_state.current_player(), 1);
         game_state = game_state.apply_action(Action::CheckCall);
-        assert_eq!(game_state.current_player, CHANCE_PLAYER);
+        assert_eq!(game_state.current_player(), 0);
+        game_state = game_state.apply_action(Action::CheckCall);
+        assert_eq!(game_state.current_player(), CHANCE_PLAYER);
+        // test with bb raise
+        let mut game_state = GameState::new(options).unwrap();
+        game_state = game_state.apply_action(game_state.sample_private_chance(&mut rng));
+        game_state = game_state.apply_action(Action::CheckCall);
+        assert_eq!(game_state.pot(), 20);
+        game_state = game_state.apply_action(Action::BetRaise(15));
+        assert_eq!(game_state.current_player(), 1);
+        assert_eq!(game_state.pot(), 35);
+        game_state = game_state.apply_action(Action::CheckCall);
+        assert_eq!(game_state.current_player(), CHANCE_PLAYER);
+        // test with all in
+        let mut game_state = GameState::new(options).unwrap();
+        game_state = game_state.apply_action(game_state.sample_private_chance(&mut rng));
+        game_state = game_state.apply_action(Action::CheckCall);
+        assert_eq!(game_state.pot(), 20);
+        game_state = game_state.apply_action(Action::BetRaise(game_state.acting_player().stack()));
+        game_state = game_state.apply_action(Action::CheckCall);
+        assert_eq!(game_state.pot(), 20000);
+        assert_eq!(game_state.current_player(), CHANCE_PLAYER);
+        game_state = game_state.apply_action(game_state.sample_public_chance(&mut rng));
+        assert_eq!(game_state.current_player(), CHANCE_PLAYER);
+        // test with fold
+        let mut game_state = GameState::new(options).unwrap();
+        game_state = game_state.apply_action(game_state.sample_private_chance(&mut rng));
+        game_state = game_state.apply_action(Action::Fold);
+        assert_eq!(game_state.is_terminal(), true);
     }
 
     #[test]
-    fn test_is_terminal() {
+    fn test_postflop() {
         let options = GameStateOptions {
             stacks: [10000, 10000],
-            wagers: [0, 0],
-            pot: 100,
-            initial_board: [0, 1, 2, 3, 4],
+            blinds: [10, 5],
+            pot: 20,
+            initial_board: [0, 1, 2, 52, 52],
         };
-        let mut game_state = GameState::new(options).unwrap();
         let mut rng = rand::thread_rng();
-        assert_eq!(game_state.is_terminal(), false);
-        game_state = game_state.apply_action(game_state.sample_private_chance(&mut rng));
-        assert_eq!(game_state.is_terminal(), false);
+        let mut initial_state = GameState::new(options).unwrap();
+        initial_state = initial_state.apply_action(initial_state.sample_private_chance(&mut rng));
+        // test check check
+        let mut game_state = initial_state.clone();
+        assert_eq!(game_state.current_player(), 0);
         game_state = game_state.apply_action(Action::CheckCall);
         game_state = game_state.apply_action(Action::CheckCall);
-        assert_eq!(game_state.is_terminal(), true);
-        // test fold
-        let options = GameStateOptions {
-            stacks: [10000, 10000],
-            wagers: [10, 5],
-            pot: 15,
-            initial_board: [0, 1, 2, 3, 4],
-        };
-        let mut game_state = GameState::new(options).unwrap();
-        game_state = game_state.apply_action(game_state.sample_private_chance(&mut rng));
+        assert_eq!(game_state.current_player(), CHANCE_PLAYER);
+        assert_eq!(game_state.pot(), 20);
+        // test bet call
+        let mut game_state = initial_state.clone();
+        game_state = game_state.apply_action(Action::BetRaise(10));
+        assert_eq!(game_state.pot(), 30);
         game_state = game_state.apply_action(Action::CheckCall);
-        assert_eq!(game_state.is_terminal(), true);
+        assert_eq!(game_state.current_player(), CHANCE_PLAYER);
+        // test check bet call
+        let mut game_state = initial_state.clone();
+        game_state = game_state.apply_action(Action::CheckCall);
+        assert_eq!(game_state.current_player(), 1);
+        game_state = game_state.apply_action(Action::BetRaise(30));
+        assert_eq!(game_state.current_player(), 0);
+        game_state = game_state.apply_action(Action::CheckCall);
+        assert_eq!(game_state.current_player(), CHANCE_PLAYER);
+        assert_eq!(game_state.pot(), 80);
+        // test bet raise call
+        let mut game_state = initial_state.clone();
+        game_state = game_state.apply_action(Action::BetRaise(10));
+        game_state = game_state.apply_action(Action::BetRaise(30));
+        assert_eq!(game_state.current_player(), 0);
+        game_state = game_state.apply_action(Action::CheckCall);
+        assert_eq!(game_state.current_player(), CHANCE_PLAYER);
+        assert_eq!(game_state.pot(), 80);
+        // test bet raise fold
+        let mut game_state = initial_state.clone();
+        game_state = game_state.apply_action(Action::BetRaise(10));
+        assert_eq!(game_state.pot(), 30);
+        game_state = game_state.apply_action(Action::BetRaise(30));
+        assert_eq!(game_state.pot(), 60);
+        game_state = game_state.apply_action(Action::Fold);
+        assert_eq!(game_state.pot(), 40);
     }
 }

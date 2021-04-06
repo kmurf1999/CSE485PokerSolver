@@ -17,7 +17,10 @@ use thiserror::Error as ThisError;
 
 type Error = Box<dyn std::error::Error>;
 
-// const PRUNE_THRESHOLD: f64 = -300_000_000.0;
+/// Regret threshold for pruning
+const NEGATIVE_REGRET_FLOOR: f64 = -300_000_000.0;
+/// How many iterations unstill we start pruning
+const PRUNE_THRESHOLD: usize = 1_000_000_000;
 // const STRATEGY_INTERVAL: usize = 10_000;
 // const DISCOUNT_INTERVAL: usize = 10_000_000;
 
@@ -140,10 +143,21 @@ impl Solver {
     pub fn run(&mut self, iterations: usize) -> [f64; 2] {
         let mut rng = SmallRng::from_entropy();
         let mut equity = [0f64; 2];
-        for _ in 0..iterations {
+        for i in 0..iterations {
             for player in 0..2 {
-                equity[usize::from(player)] +=
-                    self.traverse(self.initial_state.clone(), player, &mut rng);
+                if i > PRUNE_THRESHOLD {
+                    let q = rng.gen_range(0.0, 1.0);
+                    if q < 0.05 {
+                        equity[usize::from(player)] +=
+                            self.traverse(self.initial_state.clone(), player, &mut rng);
+                    } else {
+                        equity[usize::from(player)] +=
+                            self.traverse_prune(self.initial_state.clone(), player, &mut rng);
+                    }
+                } else {
+                    equity[usize::from(player)] +=
+                        self.traverse(self.initial_state.clone(), player, &mut rng);
+                }
             }
         }
         for eq in &mut equity {
@@ -198,7 +212,83 @@ impl Solver {
                 infoset.cummulative_regrets[a_idx] += child_utils[a_idx] - node_util;
             }
         } else {
-            // update avg strateg
+            // update avg strategy
+            for a_idx in 0..action_count {
+                infoset.cummulative_strategy[a_idx] += current_strategy[a_idx];
+            }
+        }
+        node_util
+    }
+    /// MCCFR implementation with negative regret pruning
+    fn traverse_prune<R: Rng>(&mut self, node: GameState, player: u8, rng: &mut R) -> f64 {
+        // return the reward for this player
+        if node.is_terminal() {
+            return node.player_reward(usize::from(player));
+        }
+        // sample a single chance outcome
+        if node.is_chance() {
+            let action: Action;
+            if node.is_initial_state() {
+                action = node.sample_private_chance_from_ranges(rng, &self.hand_ranges);
+            } else {
+                action = node.sample_public_chance(rng);
+            }
+            let next_state = node.apply_action(action);
+            // don't prune on river
+            if next_state.round() == BettingRound::River {
+                return self.traverse(next_state, player, rng);
+            } else {
+                return self.traverse_prune(next_state, player, rng);
+            }
+        }
+        let legal_actions = node.valid_actions(&self.betting_abstraction);
+        let action_count = legal_actions.len();
+        let hole_cards = node.acting_player().cards();
+        let hand_bucket = self.get_bucket(hole_cards[0], hole_cards[1], &node);
+        let is_key = format!("{}{}", hand_bucket, node.history_string());
+        let current_strategy = self
+            .infosets
+            .get_or_insert(is_key.clone(), action_count)
+            .current_strategy();
+        let mut node_util = 0f64;
+        let mut child_utils;
+        let mut explored;
+        if node.current_player() == player as i8 {
+            child_utils = vec![0f64; action_count];
+            explored = vec![false; action_count];
+            let regrets = &self
+                .infosets
+                .get_or_insert(is_key.clone(), action_count)
+                .cummulative_regrets;
+            for a_idx in 0..action_count {
+                if regrets[a_idx] > NEGATIVE_REGRET_FLOOR {
+                    explored[a_idx] = true;
+                }
+            }
+            for a_idx in 0..action_count {
+                if explored[a_idx] {
+                    child_utils[a_idx] =
+                        self.traverse_prune(node.apply_action(legal_actions[a_idx]), player, rng);
+                    node_util += current_strategy[a_idx] * child_utils[a_idx];
+                }
+            }
+        } else {
+            child_utils = Vec::new();
+            explored = Vec::new();
+            let a_idx = sample_action_index(&current_strategy, rng);
+            node_util = self.traverse_prune(node.apply_action(legal_actions[a_idx]), player, rng);
+        }
+
+        let infoset = self.infosets.get_or_insert(is_key, action_count);
+        if node.current_player() == player as i8 {
+            // update regrets
+            for a_idx in 0..action_count {
+                if explored[a_idx] {
+                    infoset.cummulative_regrets[a_idx] += child_utils[a_idx] - node_util;
+                }
+            }
+        } else {
+            // update avg strategy
             for a_idx in 0..action_count {
                 infoset.cummulative_strategy[a_idx] += current_strategy[a_idx];
             }
@@ -242,7 +332,7 @@ mod test {
         let initial_state = GameState::new(GameStateOptions {
             stacks: [10000, 10000],
             initial_board: [0, 1, 2, 3, 4],
-            wagers: [0, 0],
+            blinds: [10, 5],
             pot: 1000,
         })?;
         let betting_abstraction = BettingAbstraction {

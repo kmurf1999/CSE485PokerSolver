@@ -28,8 +28,7 @@ pub mod state;
 
 pub mod best_response;
 
-pub mod combos;
-
+/// Normalizes a probability density function so that the sum is 1
 pub fn normalize(pdf: &mut Vec<f64>) {
     let sum: f64 = pdf.iter().sum();
     if sum <= 0.0 {

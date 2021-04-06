@@ -13,7 +13,7 @@ fn test_solve_river() -> Result<(), Box<dyn Error>> {
     let initial_state = GameState::new(GameStateOptions {
         stacks: [10000, 10000],
         initial_board: [0, 12, 14, 50, 6],
-        wagers: [0, 0],
+        blinds: [10, 5],
         pot: 1000,
     })?;
     let betting_abstraction = BettingAbstraction {
@@ -28,14 +28,14 @@ fn test_solve_river() -> Result<(), Box<dyn Error>> {
         card_abstraction: vec![String::from("null")],
     })?;
     for i in 0..20 {
-        let br_equities = run_local_br(&solver, 10_000);
-        println!("local br {:?}", br_equities);
+        let br_equities = run_local_br(&solver, 5_000);
+        println!("best response EV {:?}", br_equities);
         let equities = solver.run(100_000);
-        solver.discount(i);
-        println!("equities {:?}", equities);
+        // solver.discount(i);
+        println!("solver EV {:?}", equities);
         let exploitability =
             0.5 * ((br_equities[0] - equities[0]) + (br_equities[1] - equities[1]));
-        println!("{}, ", exploitability);
+        println!("exploitability: {}, ", exploitability);
     }
 
     // let equities = solver.run(100000);

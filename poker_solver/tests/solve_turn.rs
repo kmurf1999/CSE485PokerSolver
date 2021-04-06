@@ -14,7 +14,7 @@ fn test_solve_turn() -> Result<(), Box<dyn Error>> {
     let initial_state = GameState::new(GameStateOptions {
         stacks: [10000, 10000],
         initial_board: [0, 12, 14, 50, 52],
-        wagers: [0, 0],
+        blinds: [10, 5],
         pot: 1000,
     })?;
     let betting_abstraction = BettingAbstraction {

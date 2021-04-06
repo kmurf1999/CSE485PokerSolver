@@ -14,7 +14,7 @@ fn test_solve_flop() -> Result<(), Box<dyn Error>> {
     let initial_state = GameState::new(GameStateOptions {
         stacks: [10000, 10000],
         initial_board: [0, 12, 14, 52, 52],
-        wagers: [0, 0],
+        blinds: [10, 5],
         pot: 2000,
     })?;
     let betting_abstraction = BettingAbstraction {
@@ -35,7 +35,7 @@ fn test_solve_flop() -> Result<(), Box<dyn Error>> {
             String::from("ochs"),
         ],
     })?;
-    for _ in 0..20 {
+    for i in 0..20 {
         let br_equities = run_local_br(&solver, 1_000);
         println!("local br {:?}", br_equities);
         let equities = solver.run(10_000);

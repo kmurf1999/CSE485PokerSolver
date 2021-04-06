@@ -1,17 +1,48 @@
 use crate::action::{Action, CHECK_CALL_IDX, FOLD_IDX};
-use crate::combos::CardComboIter;
 use crate::infoset::sample_action_index;
 use crate::normalize;
 use crate::solver::Solver;
 use crate::state::GameState;
 use rand::prelude::SmallRng;
-use rust_poker::hand_evaluator::{evaluate, Hand, CARDS};
-
-use rand::Rng;
 use rand::SeedableRng;
+use rust_poker::hand_evaluator::{evaluate, Hand, CARDS};
+use rust_poker::hand_range::HandRange;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+
+fn eval_hand_vs_range_on_board(
+    board: Hand,
+    hand: Hand,
+    range: &HandRange,
+    beliefs: &[f64],
+    used_cards_mask: u64,
+) -> (f64, f64) {
+    // evaluate vs opponent range
+    let mut wins = 0f64;
+    let mut games = 0f64;
+    let our_score = evaluate(&(hand + board));
+    for (hand_idx, hand_prob) in beliefs.iter().enumerate() {
+        if *hand_prob == 0f64 {
+            continue;
+        }
+        let opp_combo = range.hands[hand_idx];
+        let opp_combo_mask = (1u64 << opp_combo.0) | (1u64 << opp_combo.1);
+        if (opp_combo_mask & used_cards_mask) != 0 {
+            continue;
+        }
+        let opp_hand: Hand = CARDS[usize::from(opp_combo.0)] + CARDS[usize::from(opp_combo.1)];
+        let opp_score = evaluate(&(opp_hand + board));
+        if our_score > opp_score {
+            wins += *hand_prob;
+        }
+        if our_score == opp_score {
+            wins += *hand_prob * 0.5;
+        }
+        games += *hand_prob;
+    }
+    (wins, games)
+}
 
 pub struct BrThread<'a> {
     solver: &'a Solver,
@@ -75,43 +106,6 @@ impl<'a> BrThread<'a> {
             }
         }
         equity
-        // for _ in 0..iterations {
-        //     let mut beliefs: Vec<Vec<f64>> = self
-        //         .hand_ranges
-        //         .iter()
-        //         .map(|hr| {
-        //             hr.hands
-        //                 .iter()
-        //                 .map(|combo| combo.2 as f64)
-        //                 .collect::<Vec<f64>>()
-        //         })
-        //         .collect();
-        //     let deal = self
-        //         .initial_state
-        //         .sample_private_chance_from_ranges(&mut self.rng, &self.hand_ranges);
-        //     let initial_state = self.initial_state.apply_action(deal);
-        //     for (player, player_beliefs) in beliefs.iter_mut().enumerate() {
-        //         let other_player_cards = initial_state.player(1 - player).cards();
-        //         let other_player_card_mask =
-        //             (1u64 << other_player_cards[0]) | (1u64 << other_player_cards[1]);
-        //         for (i, combo) in self.hand_ranges[player].hands.iter().enumerate() {
-        //             let combo_mask = (1u64 << combo.0) | (1u64 << combo.1);
-        //             if (combo_mask & other_player_card_mask) != 0 {
-        //                 player_beliefs[i] = 0f64;
-        //             }
-        //         }
-        //         normalize(player_beliefs);
-        //     }
-        //     for br_player in 0..2 {
-        //         equity[usize::from(br_player)] += self.traverse_br(
-        //             initial_state.clone(),
-        //             &mut beliefs[usize::from(1 - br_player)],
-        //             br_player,
-        //             &mut opp_strategy_cache,
-        //             &mut rng,
-        //         );
-        //     }
-        // }
     }
     fn traverse_br(&mut self, node: GameState, beliefs: &mut Vec<f64>, br_player: u8) -> f64 {
         let solver = self.solver;
@@ -252,7 +246,7 @@ impl<'a> BrThread<'a> {
                 fp * pot + (1.0 - fp) * (wp * (pot + br_amt) - (1.0 - wp) * (asked + br_amt));
         }
         // get action that has maximum utility
-        let mut max_util = 0f64;
+        let mut max_util = f64::NEG_INFINITY;
         let mut max_action_idx = 0;
         for (i, util) in action_utils.iter().enumerate() {
             if *util > max_util {
@@ -260,10 +254,7 @@ impl<'a> BrThread<'a> {
                 max_action_idx = i;
             }
         }
-        if max_util > 0f64 {
-            return valid_actions[max_action_idx];
-        }
-        valid_actions[FOLD_IDX]
+        valid_actions[max_action_idx]
     }
     /// Calcuates win percentage if both players check/call from this node onward
     /// Exhaustivly deals all possible remaining board cards and computes the mean probability
@@ -285,62 +276,72 @@ impl<'a> BrThread<'a> {
         }
         let our_cards = node.player(br_player.into()).cards();
         let our_hand: Hand = CARDS[usize::from(our_cards[0])] + CARDS[usize::from(our_cards[1])];
+        let opp_range = &self.solver.hand_ranges[usize::from(1 - br_player)];
         used_cards_mask |= (1u64 << our_cards[0]) | (1u64 << our_cards[1]);
 
-        if 5 - board_card_count == 0 {
-            let our_score = evaluate(&(our_hand + board));
-            for (i, prob) in beliefs.iter().enumerate() {
-                if *prob == 0f64 {
-                    continue;
-                }
-                let opp_combo = &self.solver.hand_ranges[usize::from(1 - br_player)].hands[i];
-                let opp_combo_mask = (1u64 << opp_combo.0) | (1u64 << opp_combo.1);
-                if (opp_combo_mask & used_cards_mask) != 0 {
-                    continue;
-                }
-                let opp_hand: Hand =
-                    CARDS[usize::from(opp_combo.0)] + CARDS[usize::from(opp_combo.1)];
-                let opp_score = evaluate(&(opp_hand + board));
-                if our_score > opp_score {
-                    wins += *prob;
-                }
-                if our_score == opp_score {
-                    wins += *prob * 0.5;
-                }
-                games += *prob;
+        match board_card_count {
+            0 => {
+                panic!("preflop is costly and unimplemented")
             }
-        } else {
-            let board_combos = CardComboIter::new(used_cards_mask, 5 - board_card_count);
-            for combo in board_combos {
-                // get eval combo
-                let mut board_combo = board;
-                let mut used_cards_mask = used_cards_mask;
-                for card in combo.iter() {
-                    board_combo += CARDS[usize::from(*card)];
-                    used_cards_mask |= 1u64 << *card;
-                }
-                let our_score = evaluate(&(our_hand + board_combo));
-                for (i, prob) in beliefs.iter().enumerate() {
-                    if *prob == 0f64 {
+            3 => {
+                // deal two cards
+                for i in 0..52 {
+                    if (board.mask & CARDS[i].mask) != 0 {
                         continue;
                     }
-                    let opp_combo = &self.solver.hand_ranges[usize::from(1 - br_player)].hands[i];
-                    let opp_combo_mask = (1u64 << opp_combo.0) | (1u64 << opp_combo.1);
-                    if (opp_combo_mask & used_cards_mask) != 0 {
-                        continue;
+                    let used_cards_mask = used_cards_mask | (1u64 << i);
+                    let board = board + CARDS[i];
+                    for j in i + 1..52 {
+                        if (board.mask & CARDS[i].mask) != 0 {
+                            continue;
+                        }
+                        let used_cards_mask = used_cards_mask | (1u64 << j);
+                        let board = board + CARDS[j];
+                        // evaluate vs opponent range
+                        let (w, g) = eval_hand_vs_range_on_board(
+                            board,
+                            our_hand,
+                            opp_range,
+                            beliefs,
+                            used_cards_mask,
+                        );
+                        wins += w;
+                        games += g;
                     }
-                    let opp_hand: Hand =
-                        CARDS[usize::from(opp_combo.0)] + CARDS[usize::from(opp_combo.1)];
-                    let opp_score = evaluate(&(opp_hand + board_combo));
-                    if our_score > opp_score {
-                        wins += *prob;
-                    }
-                    if our_score == opp_score {
-                        wins += *prob * 0.5;
-                    }
-                    games += *prob;
                 }
             }
+            4 => {
+                // deal one
+                for i in 0..52 {
+                    if (board.mask & CARDS[i].mask) != 0 {
+                        continue;
+                    }
+                    let used_cards_mask = used_cards_mask | (1u64 << i);
+                    let board = board + CARDS[i];
+                    // evaluate vs opponent range
+                    let (w, g) = eval_hand_vs_range_on_board(
+                        board,
+                        our_hand,
+                        opp_range,
+                        beliefs,
+                        used_cards_mask,
+                    );
+                    wins += w;
+                    games += g;
+                }
+            }
+            5 => {
+                let (w, g) = eval_hand_vs_range_on_board(
+                    board,
+                    our_hand,
+                    opp_range,
+                    beliefs,
+                    used_cards_mask,
+                );
+                wins += w;
+                games += g;
+            }
+            _ => panic!("invalid board card count"),
         }
         wins / games
     }
