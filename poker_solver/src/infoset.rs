@@ -10,6 +10,7 @@ use std::error::Error;
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::result::Result;
+use std::sync::{Arc, Mutex, RwLock};
 
 macro_rules! max {
     ($x: expr) => ($x);
@@ -70,7 +71,7 @@ pub struct Infoset {
 /// Maps serialized game states to information sets
 #[derive(Debug)]
 pub struct InfosetTable {
-    pub table: HashMap<String, Infoset>,
+    pub table: RwLock<HashMap<String, Mutex<HashMap<String, Infoset>>>>,
 }
 
 impl Infoset {
@@ -126,63 +127,88 @@ impl Infoset {
 impl Default for InfosetTable {
     fn default() -> Self {
         InfosetTable {
-            table: HashMap::default(),
+            table: Default::default(),
         }
     }
 }
 
 impl InfosetTable {
-    pub fn with_capacity(size: usize) -> InfosetTable {
-        InfosetTable {
-            table: HashMap::with_capacity(size),
-        }
-    }
-    pub fn get_or_insert(&mut self, key: String, n_actions: usize) -> &mut Infoset {
-        match self.table.entry(key) {
-            Entry::Occupied(o) => o.into_mut(),
-            Entry::Vacant(v) => v.insert(Infoset::init(n_actions)),
-        }
-    }
-    pub fn get(&self, key: String) -> Option<&Infoset> {
-        self.table.get(&key)
-    }
-    pub fn len(&self) -> usize {
-        self.table.len()
-    }
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
+    // pub fn get_or_insert(&mut self, key: String, n_actions: usize) -> &mut Infoset {
+    //     match self.table.entry(key) {
+    //         Entry::Occupied(o) => o.into_mut(),
+    //         Entry::Vacant(v) => v.insert(Infoset::init(n_actions)),
+    //     }
+    // }
+    // pub fn get(&self, key: String) -> Option<&Infoset> {
+    //     self.table.get(&key)
+    // }
+    // pub fn len(&self) -> usize {
+    //     self.table.len()
+    // }
+    // pub fn is_empty(&self) -> bool {
+    //     self.table.len() == 0
+    // }
     /// writes all information sets to a file
     /// currently uses a 10 byte buffer to store table keys
-    pub fn write_to_file(&self, file: &mut BufWriter<File>) -> Result<(), Box<dyn Error>> {
-        for (key, iset) in self.table.iter() {
-            file.write_all(key.as_bytes())?;
-            file.write_all(b"\n")?;
-            iset.write_to_file(file)?;
-        }
-        file.flush()?;
-        Ok(())
-    }
+    // pub fn write_to_file(&self, file: &mut BufWriter<File>) -> Result<(), Box<dyn Error + '_>> {
+    //     for (action_key, table) in self.table.read()?.iter() {
+    //         for (card_key, infoset) in table.lock()?.iter() {
+    //             file.write_all(format!("{}-{}\n", card_key, action_key).as_bytes())?;
+    //             infoset.write_to_file(file)?;
+    //         }
+    //     }
+    //     file.flush()?;
+    //     Ok(())
+    // }
     /// reads information sets from a file
-    /// currently uses a 10 byte buffer to store table keys
-    pub fn read_from_file(file: &mut BufReader<File>) -> Result<Self, Box<dyn Error>> {
-        let mut infosets = InfosetTable::default();
-        loop {
-            let mut key = String::new();
-            match file.read_line(&mut key) {
-                Ok(size) => {
-                    if size == 0 {
-                        break;
-                    }
-                    let iset = Infoset::read_from_file(file)?;
-                    infosets.get_or_insert(key.trim_end().to_string(), iset.action_count());
-                }
-                Err(_) => {
-                    break;
-                }
-            }
+    // pub fn read_from_file(file: &mut BufReader<File>) -> Result<Self, Box<dyn Error>> {
+    //     let mut infosets = InfosetTable::default();
+    //     let table = infosets.table.write()?;
+    //     loop {
+    //         let mut key = String::new();
+    //         match file.read_line(&mut key) {
+    //             Ok(size) => {
+    //                 if size == 0 {
+    //                     break;
+    //                 }
+    //                 let split_key: Vec<&str> = key.trim_end().split('-').collect();
+    //                 let iset = Infoset::read_from_file(file)?;
+    //                 let child_table = match table.entry(split_key[1].to_string()) {
+    //                     Entry::Occupied(o) => o.into_mut(),
+    //                     Entry::Vacant(v) => v.insert(Default::default()),
+    //                 };
+    //                 child_table.lock()?.insert(split_key[0].to_string(), iset);
+    //             }
+    //             Err(_) => {
+    //                 break;
+    //             }
+    //         }
+    //     }
+    //     Ok(infosets)
+    // }
+
+    fn action_key_exists(&self, key: &str) -> bool {
+        self.table.read().unwrap().contains_key(key)
+    }
+
+    pub fn insert_action_key(&self, key: String) {
+        if !self.action_key_exists(&key) {
+            self.table.write().unwrap().insert(key, Default::default());
         }
-        Ok(infosets)
+    }
+
+    pub fn get_strategy(&self, action_key: &str, card_key: String, n_actions: usize) -> Vec<f64> {
+        match self.table.read().unwrap().get(action_key) {
+            Some(table) => {
+                let mut table = table.lock().unwrap();
+                let infoset = table
+                    .entry(card_key)
+                    .or_insert_with(|| Infoset::init(n_actions));
+
+                infoset.current_strategy()
+            }
+            None => panic!("history key should exist in table"),
+        }
     }
 }
 
@@ -237,142 +263,142 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_rw_infoset() {
-        let filename = "test_rw_infoset.dat";
-        let file = File::create(filename).unwrap();
-        let mut file = BufWriter::new(file);
-        let mut rng = rand::thread_rng();
-        let mut iset = Infoset::init(5);
+    // #[test]
+    // fn test_rw_infoset() {
+    //     let filename = "test_rw_infoset.dat";
+    //     let file = File::create(filename).unwrap();
+    //     let mut file = BufWriter::new(file);
+    //     let mut rng = rand::thread_rng();
+    //     let mut iset = Infoset::init(5);
 
-        let regrets: Vec<f64> = (0..5)
-            .into_iter()
-            .map(|_| rng.gen_range(-10.0, 10.0))
-            .collect();
-        iset.cummulative_regrets[..5].clone_from_slice(&regrets[..5]);
+    //     let regrets: Vec<f64> = (0..5)
+    //         .into_iter()
+    //         .map(|_| rng.gen_range(-10.0, 10.0))
+    //         .collect();
+    //     iset.cummulative_regrets[..5].clone_from_slice(&regrets[..5]);
 
-        iset.write_to_file(&mut file).unwrap();
-        file.flush().unwrap();
+    //     iset.write_to_file(&mut file).unwrap();
+    //     file.flush().unwrap();
 
-        let file = File::open(filename).unwrap();
-        let mut file = BufReader::new(file);
-        let iset = Infoset::read_from_file(&mut file).unwrap();
+    //     let file = File::open(filename).unwrap();
+    //     let mut file = BufReader::new(file);
+    //     let iset = Infoset::read_from_file(&mut file).unwrap();
 
-        for i in 0..5 {
-            assert_eq!(regrets[i], iset.cummulative_regrets[i]);
-        }
+    //     for i in 0..5 {
+    //         assert_eq!(regrets[i], iset.cummulative_regrets[i]);
+    //     }
 
-        std::fs::remove_file(filename).unwrap();
-    }
+    //     std::fs::remove_file(filename).unwrap();
+    // }
 
-    #[test]
-    fn test_rw_infoset_table() {
-        let filename = "test_rw_infoset_table.dat";
-        let file = File::create(filename).unwrap();
-        let mut file = BufWriter::new(file);
-        let mut infosets = InfosetTable::default();
+    // #[test]
+    // fn test_rw_infoset_table() {
+    //     let filename = "test_rw_infoset_table.dat";
+    //     let file = File::create(filename).unwrap();
+    //     let mut file = BufWriter::new(file);
+    //     let mut infosets = InfosetTable::default();
 
-        let mut rng = rand::thread_rng();
-        let regrets: Vec<f64> = (0..5)
-            .into_iter()
-            .map(|_| rng.gen_range(-10.0, 10.0))
-            .collect();
+    //     let mut rng = rand::thread_rng();
+    //     let regrets: Vec<f64> = (0..5)
+    //         .into_iter()
+    //         .map(|_| rng.gen_range(-10.0, 10.0))
+    //         .collect();
 
-        for i in 0..100 {
-            let mut iset = Infoset::init(5);
-            iset.cummulative_regrets[..5].clone_from_slice(&regrets[..5]);
-            infosets.get_or_insert(i.to_string(), 5);
-        }
+    //     for i in 0..100 {
+    //         let mut iset = Infoset::init(5);
+    //         iset.cummulative_regrets[..5].clone_from_slice(&regrets[..5]);
+    //         infosets.get_or_insert(i.to_string(), 5);
+    //     }
 
-        infosets.write_to_file(&mut file).unwrap();
+    //     infosets.write_to_file(&mut file).unwrap();
 
-        let file = File::open(filename).unwrap();
-        let mut file = BufReader::new(file);
-        let infosets = InfosetTable::read_from_file(&mut file).unwrap();
+    //     let file = File::open(filename).unwrap();
+    //     let mut file = BufReader::new(file);
+    //     let infosets = InfosetTable::read_from_file(&mut file).unwrap();
 
-        assert_eq!(infosets.len(), 100);
+    //     assert_eq!(infosets.len(), 100);
 
-        std::fs::remove_file(filename).unwrap();
-    }
+    //     std::fs::remove_file(filename).unwrap();
+    // }
 
-    #[test]
-    fn test_get_or_insert() {
-        let mut table = InfosetTable::default();
-        table.get_or_insert("key".to_string(), 5);
-        assert_eq!(table.len(), 1);
-        table.get_or_insert("key".to_string(), 5);
-        assert_eq!(table.len(), 1);
-        table.get_or_insert("newkey".to_string(), 3);
-        assert_eq!(table.len(), 2);
-    }
-    // BENCHMARKS
-    #[bench]
-    fn bench_regret_matching(b: &mut Bencher) {
-        // 96 ns/iter (+/- 16)
-        let regrets = vec![
-            3.8901208570692436,
-            8.03097953362121,
-            -7.451353461846715,
-            2.3215533257352217,
-            7.020619986422162,
-        ];
-        b.iter(|| {
-            regret_matching(&regrets);
-        });
-    }
-    #[bench]
-    fn bench_sample_action_index(b: &mut Bencher) {
-        // 12 ns/iter (+/- 4)
-        let mut rng = rand::thread_rng();
-        let regrets: Vec<f64> = (0..5)
-            .into_iter()
-            .map(|_| rng.gen_range(-10.0, 10.0))
-            .collect();
-        let strategy_profile = regret_matching(&regrets);
-        b.iter(|| {
-            sample_action_index(&strategy_profile, &mut rng);
-        });
-    }
+    // #[test]
+    // fn test_get_or_insert() {
+    //     let mut table = InfosetTable::default();
+    //     table.get_or_insert("key".to_string(), 5);
+    //     assert_eq!(table.len(), 1);
+    //     table.get_or_insert("key".to_string(), 5);
+    //     assert_eq!(table.len(), 1);
+    //     table.get_or_insert("newkey".to_string(), 3);
+    //     assert_eq!(table.len(), 2);
+    // }
+    // // BENCHMARKS
+    // #[bench]
+    // fn bench_regret_matching(b: &mut Bencher) {
+    //     // 96 ns/iter (+/- 16)
+    //     let regrets = vec![
+    //         3.8901208570692436,
+    //         8.03097953362121,
+    //         -7.451353461846715,
+    //         2.3215533257352217,
+    //         7.020619986422162,
+    //     ];
+    //     b.iter(|| {
+    //         regret_matching(&regrets);
+    //     });
+    // }
+    // #[bench]
+    // fn bench_sample_action_index(b: &mut Bencher) {
+    //     // 12 ns/iter (+/- 4)
+    //     let mut rng = rand::thread_rng();
+    //     let regrets: Vec<f64> = (0..5)
+    //         .into_iter()
+    //         .map(|_| rng.gen_range(-10.0, 10.0))
+    //         .collect();
+    //     let strategy_profile = regret_matching(&regrets);
+    //     b.iter(|| {
+    //         sample_action_index(&strategy_profile, &mut rng);
+    //     });
+    // }
 
-    #[bench]
-    fn bench_write_infoset_table(b: &mut Bencher) {
-        // 1,180,417 ns/iter (+/- 393,312)
-        let filename = "bench_write_infoset_table.dat";
-        let file = File::create(filename).unwrap();
-        let mut file = BufWriter::new(file);
-        let mut infosets = InfosetTable::default();
+    // #[bench]
+    // fn bench_write_infoset_table(b: &mut Bencher) {
+    //     // 1,180,417 ns/iter (+/- 393,312)
+    //     let filename = "bench_write_infoset_table.dat";
+    //     let file = File::create(filename).unwrap();
+    //     let mut file = BufWriter::new(file);
+    //     let mut infosets = Arc::new(InfosetTable::default());
 
-        for i in 0..1000 {
-            infosets.get_or_insert(i.to_string(), 5);
-        }
+    //     // for i in 0..1000 {
+    //     //     infosets.get_or_insert(format!("{}-{}", i, i), 5);
+    //     // }
 
-        b.iter(|| {
-            infosets.write_to_file(&mut file).unwrap();
-        });
+    //     b.iter(|| {
+    //         infosets.write_to_file(&mut file).unwrap();
+    //     });
 
-        std::fs::remove_file(filename).unwrap();
-    }
+    //     std::fs::remove_file(filename).unwrap();
+    // }
 
-    #[bench]
-    fn bench_read_infoset_table(b: &mut Bencher) {
-        // 664,570 ns/iter (+/- 227,522)
-        let filename = "bench_read_infoset_table.dat";
-        let file = File::create(filename).unwrap();
-        let mut file = BufWriter::new(file);
-        let mut infosets = InfosetTable::default();
+    // #[bench]
+    // fn bench_read_infoset_table(b: &mut Bencher) {
+    //     // 664,570 ns/iter (+/- 227,522)
+    //     let filename = "bench_read_infoset_table.dat";
+    //     let file = File::create(filename).unwrap();
+    //     let mut file = BufWriter::new(file);
+    //     let mut infosets = InfosetTable::default();
 
-        for i in 0..1000 {
-            infosets.get_or_insert(i.to_string(), 5);
-        }
+    //     for i in 0..1000 {
+    //         infosets.get_or_insert(i.to_string(), 5);
+    //     }
 
-        infosets.write_to_file(&mut file).unwrap();
+    //     infosets.write_to_file(&mut file).unwrap();
 
-        b.iter(|| {
-            let file = File::open(filename).unwrap();
-            let mut file = BufReader::new(file);
-            InfosetTable::read_from_file(&mut file).unwrap();
-        });
+    //     b.iter(|| {
+    //         let file = File::open(filename).unwrap();
+    //         let mut file = BufReader::new(file);
+    //         InfosetTable::read_from_file(&mut file).unwrap();
+    //     });
 
-        std::fs::remove_file(filename).unwrap();
-    }
+    //     std::fs::remove_file(filename).unwrap();
+    // }
 }

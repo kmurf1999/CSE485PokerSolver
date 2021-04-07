@@ -1,7 +1,7 @@
 //!
-//! Represents an action in a game of HULN Holdem'
-//! Actions are used to perform state transitions
-//! They include all player action and chance actions
+//! Represents an action in a game of HULN Holdem'.
+//! Actions are used to perform state transitions.
+//! They include all player action and chance actions.
 //!
 use serde::{Deserialize, Serialize};
 

@@ -10,14 +10,17 @@ extern crate test;
 
 /// Player actions in texas holdem
 pub mod action;
+/// Local best response implementation
+/// used to approximate exploitability of solutions
+pub mod best_response;
+/// Betting abstraction used by solver
 pub mod betting_abstraction;
 /// Scores and prints card using an 8bit representation
 pub mod card;
 /// Loads card abstraction files into memory
 pub mod card_abstraction;
-/// Defines how to represent poker messages in json
-// pub mod codec;
 pub mod constants;
+/// Stores regrets and strategy for each infoset
 pub mod infoset;
 /// Represents a betting round in poker
 pub mod round;
@@ -25,8 +28,6 @@ pub mod round;
 pub mod solver;
 /// Structures and methods for dealing with game state in texas holdem
 pub mod state;
-
-pub mod best_response;
 
 /// Normalizes a probability density function so that the sum is 1
 pub fn normalize(pdf: &mut Vec<f64>) {

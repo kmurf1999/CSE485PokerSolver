@@ -22,7 +22,7 @@ fn test_solve_flop() -> Result<(), Box<dyn Error>> {
         raise_sizes: [vec![], vec![], vec![], vec![1.0]],
         all_in_threshold: 0f64,
     };
-    let mut solver = Solver::init(SolverOptions {
+    let solver = Solver::init(SolverOptions {
         initial_state,
         hand_ranges: [
             String::from("22+,AT+,KT+,QT+,JT+"),
@@ -30,27 +30,20 @@ fn test_solve_flop() -> Result<(), Box<dyn Error>> {
         ],
         betting_abstraction,
         card_abstraction: vec![
-            String::from("null"),
+            String::from("emd"),
             String::from("emd"),
             String::from("ochs"),
         ],
     })?;
-    for i in 0..20 {
+    for _ in 0..20 {
         let br_equities = run_local_br(&solver, 1_000);
-        println!("local br {:?}", br_equities);
+        println!("lbr EV {:?}", br_equities);
         let equities = solver.run(10_000);
-        solver.discount(i);
-        println!("evs {:?}", equities);
+        println!("solver EV {:?}", equities);
         println!("dEV: {}", equities.iter().sum::<f64>().abs());
         let exploitability =
             0.5 * ((br_equities[0] - equities[0]) + (br_equities[1] - equities[1]));
-        println!("{}, ", exploitability);
+        println!("exploitability: {}, ", exploitability);
     }
-
-    // let equities = solver.run(100000);
-    // println!("{:?}", equities);
-    // let br_eq = solver.run_br(1000, 0);
-    // println!("{}", br_eq);
-
     Ok(())
 }

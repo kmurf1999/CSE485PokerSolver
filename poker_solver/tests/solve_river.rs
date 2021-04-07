@@ -21,14 +21,14 @@ fn test_solve_river() -> Result<(), Box<dyn Error>> {
         raise_sizes: [vec![], vec![], vec![], vec![1.0]],
         all_in_threshold: 0f64,
     };
-    let mut solver = Solver::init(SolverOptions {
+    let solver = Solver::init(SolverOptions {
         initial_state,
         hand_ranges: [String::from("random"), String::from("random")],
         betting_abstraction,
         card_abstraction: vec![String::from("null")],
     })?;
-    for i in 0..20 {
-        let br_equities = run_local_br(&solver, 5_000);
+    for _ in 0..20 {
+        let br_equities = run_local_br(&solver, 500);
         println!("best response EV {:?}", br_equities);
         let equities = solver.run(100_000);
         // solver.discount(i);

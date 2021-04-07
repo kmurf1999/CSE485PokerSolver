@@ -7,9 +7,10 @@ use rand::prelude::SmallRng;
 use rand::SeedableRng;
 use rust_poker::hand_evaluator::{evaluate, Hand, CARDS};
 use rust_poker::hand_range::HandRange;
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Mutex,
+};
 
 fn eval_hand_vs_range_on_board(
     board: Hand,
@@ -44,9 +45,8 @@ fn eval_hand_vs_range_on_board(
     (wins, games)
 }
 
-pub struct BrThread<'a> {
+struct BrThread<'a> {
     solver: &'a Solver,
-    strategy_cache: HashMap<String, Vec<f64>>,
     counter: Arc<AtomicUsize>,
     rng: SmallRng,
 }
@@ -55,7 +55,6 @@ impl<'a> BrThread<'a> {
     fn new(solver: &'a Solver, counter: Arc<AtomicUsize>) -> Self {
         BrThread {
             solver,
-            strategy_cache: HashMap::default(),
             counter,
             rng: SmallRng::from_entropy(),
         }
@@ -164,13 +163,12 @@ impl<'a> BrThread<'a> {
             let hole_cards = node.acting_player().cards();
             let hand_bucket = solver.get_bucket(hole_cards[0], hole_cards[1], &node);
             let is_key = format!("{}{}", hand_bucket, node.history_string());
-            let strategy =
-                self.strategy_cache
-                    .entry(is_key.clone())
-                    .or_insert_with(|| match solver.infosets.get(is_key) {
-                        Some(val) => val.average_strategy(),
-                        None => vec![1.0 / action_count as f64; action_count],
-                    });
+            let strategy = self.get_strategy(
+                node.history_string(),
+                &hand_bucket.to_string(),
+                action_count,
+            );
+
             let a_idx = sample_action_index(&strategy, &mut self.rng);
             for (i, hand) in solver.hand_ranges[usize::from(1 - br_player)]
                 .hands
@@ -182,13 +180,11 @@ impl<'a> BrThread<'a> {
                 }
                 let hand_bucket = solver.get_bucket(hand.0, hand.1, &node);
                 let is_key = format!("{}{}", hand_bucket, node.history_string());
-                let strategy = self
-                    .strategy_cache
-                    .entry(is_key.clone())
-                    .or_insert_with(|| match solver.infosets.get(is_key) {
-                        Some(val) => val.average_strategy(),
-                        None => vec![1.0 / action_count as f64; action_count],
-                    });
+                let strategy = self.get_strategy(
+                    node.history_string(),
+                    &hand_bucket.to_string(),
+                    action_count,
+                );
                 beliefs[i] *= strategy[a_idx];
             }
             normalize(beliefs);
@@ -230,13 +226,11 @@ impl<'a> BrThread<'a> {
                     solver.hand_ranges[usize::from(1 - br_player)].hands[opp_hand_idx];
                 let opp_bucket = solver.get_bucket(opp_hole_cards.0, opp_hole_cards.1, &next_state);
                 let is_key = format!("{}{}", opp_bucket, next_state.history_string());
-                let opp_strategy = self
-                    .strategy_cache
-                    .entry(is_key.clone())
-                    .or_insert_with(|| match solver.infosets.get(is_key) {
-                        Some(val) => val.average_strategy(),
-                        None => vec![1.0 / opp_action_count as f64; opp_action_count],
-                    });
+                let opp_strategy = self.get_strategy(
+                    next_state.history_string(),
+                    &opp_bucket.to_string(),
+                    opp_action_count,
+                );
                 fp += beliefs[opp_hand_idx] * opp_strategy[FOLD_IDX];
                 new_beliefs[opp_hand_idx] *= 1f64 - opp_strategy[FOLD_IDX];
             }
@@ -344,6 +338,24 @@ impl<'a> BrThread<'a> {
             _ => panic!("invalid board card count"),
         }
         wins / games
+    }
+    fn get_strategy(&mut self, action_key: &str, card_key: &str, action_count: usize) -> Vec<f64> {
+        let current_strategy = {
+            let table = self.solver.infosets.table.read().unwrap();
+            match table.get(action_key) {
+                Some(child_table) => {
+                    let child_table = child_table.lock().unwrap();
+                    match child_table.get(card_key) {
+                        Some(infoset) => infoset.current_strategy(),
+                        None => {
+                            vec![1f64 / action_count as f64; action_count]
+                        }
+                    }
+                }
+                None => vec![1f64 / action_count as f64; action_count],
+            }
+        };
+        current_strategy
     }
 }
 

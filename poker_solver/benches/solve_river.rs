@@ -68,6 +68,7 @@ fn bench_run_1(b: &mut Bencher) -> Result<(), Box<dyn Error>> {
 #[bench]
 fn bench_run_10000(b: &mut Bencher) -> Result<(), Box<dyn Error>> {
     // 423,644,946 ns/iter (+/- 72,076,016)
+    // 160,336,471 ns/iter (+/- 12,060,882) on 8 threads
     // basic river solver setup
     let initial_state = GameState::new(GameStateOptions {
         stacks: [10000, 10000],
@@ -80,7 +81,7 @@ fn bench_run_10000(b: &mut Bencher) -> Result<(), Box<dyn Error>> {
         raise_sizes: [vec![], vec![], vec![], vec![1.0]],
         all_in_threshold: 0f64,
     };
-    let mut solver = Solver::init(SolverOptions {
+    let solver = Solver::init(SolverOptions {
         initial_state,
         hand_ranges: [String::from("random"), String::from("random")],
         betting_abstraction,
@@ -107,7 +108,7 @@ fn bench_run_br_1(b: &mut Bencher) -> Result<(), Box<dyn Error>> {
         raise_sizes: [vec![], vec![], vec![], vec![1.0]],
         all_in_threshold: 0f64,
     };
-    let mut solver = Solver::init(SolverOptions {
+    let solver = Solver::init(SolverOptions {
         initial_state,
         hand_ranges: [String::from("random"), String::from("random")],
         betting_abstraction,

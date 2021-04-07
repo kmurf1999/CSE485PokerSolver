@@ -106,17 +106,17 @@ impl PlayerState {
 /// assert_eq!(state.pot(), 100);
 /// ```
 pub struct GameStateOptions {
-    /// initial stack sizes for each player
-    /// stacks must be greater than zero
+    /// Initial stack sizes for each player
+    /// - **Note:** stacks must be greater than zero
     pub stacks: [u32; 2],
-    /// The blinds for each player (Big blind comes first)
-    /// if Betting round is preflop, blinds will be applied
-    /// the first blind is used to determine min raise
+    /// The blinds for each player (Big blind comes first).
+    /// - If Betting round is preflop, blinds will be applied by subtracting for each players stack and added to the pot.
+    /// - The first blind is used to determine the min bet.
     pub blinds: [u32; 2],
-    /// initial pot size
-    /// pot should be greater than or equal to the sum of all wagers
+    /// Initial pot size
     pub pot: u32,
     /// Initial board cards
+    /// - 52 is used as a default value to represent a card that has yet to be drawn
     pub initial_board: [Card; 5],
 }
 
@@ -131,25 +131,30 @@ pub enum GameStateError {
 }
 
 /// Represents the current state of a HUNL Texas Holdem Game
-/// **Note** this is the two player variant of Texas Holdem
+///
+/// State is *immutable*.  To transition between states, call `state.apply_action(action)`.  This will return a new, updated state.
+///
 #[derive(Debug)]
 pub struct GameState {
     /// The current betting round
     round: BettingRound,
-    /// The size in chips of the pot
+    /// The size of the pot in chips
     pot: u32,
     /// The state of each player
     players: [PlayerState; 2],
-    /// The blinds for each player big blind comes first
+    /// The blinds for each player
+    /// - big blind comes first
     blinds: [u32; 2],
-    /// index of current player, if the index == -1, the current player is the chance player
+    /// Index of current player
+    /// - An index of `-1` represents the Chance Player.
+    /// - An index of `-2` represents a Terminal State.
     current_player: i8,
     /// Community Cards
-    /// card is n in 0..52 where n = 4 * rank + suit
+    /// `card = n = [0, 52)` where `n = 4 * rank + suit`
     board: [Card; 5],
-    /// mask of used cards used for sampling
+    /// 64bit mask of used cards that is used for sampling
     used_cards_mask: u64,
-    /// game history
+    /// The game history represented as a string
     history: String,
 }
 
@@ -243,7 +248,7 @@ impl GameState {
     pub fn player_allin(&self) -> bool {
         (self.players[0].stack == 0) || (self.players[1].stack == 0)
     }
-    /// Returns a list of valid actions given a betting abstraction
+    /// Returns a list of valid actions given a player's betting abstraction
     pub fn valid_actions(&self, betting_abstraction: &BettingAbstraction) -> Vec<Action> {
         let mut actions = vec![];
         let our_stack = self.acting_player().stack;
@@ -305,7 +310,7 @@ impl GameState {
         actions
     }
     /// Returns true if the specified action is valid
-    /// **Note:** For chance actions, it does not consider conflicting cards or number of cards specified
+    /// - **Note:** For chance actions, it does not consider conflicting cards or number of cards specified
     pub fn is_action_valid(&self, action: Action) -> bool {
         match action {
             Action::Fold => self.other_player().wager > self.acting_player().wager,
@@ -334,8 +339,8 @@ impl GameState {
             Action::Chance(_) => self.is_chance(),
         }
     }
-    /// Applys an action an returns a new game state
-    /// Assumes that the specified action is valid
+    /// Applys an action an returns a new, updated game state
+    /// - Assumes that the specified action is valid
     pub fn apply_action(&self, action: Action) -> GameState {
         let mut next_state = self.clone();
         match action {
@@ -462,8 +467,8 @@ impl GameState {
         }
     }
     /// Returns the rewards for each player
-    /// Rewards are zero sum
-    /// **Note:** Only call this on a terminal node
+    /// - Rewards are zero sum
+    /// - **Note:** Can only be called on a terminal state
     pub fn rewards(&self) -> [f64; 2] {
         let mut payouts = [0f64; 2];
         // TODO unimplemented
@@ -510,9 +515,6 @@ impl GameState {
     pub fn player_reward(&self, player: usize) -> f64 {
         self.rewards()[player]
     }
-    // /// Returns the reward for the specified player idx
-    // /// **Note:** Only call this function on a terminal node.
-    // pub fn player_reward(&self, player: u8) -> f64 {}
     /// Samples a private card dealing from 2 hand ranges and returns new state
     pub fn sample_private_chance_from_ranges<R: Rng>(
         &self,
@@ -538,8 +540,7 @@ impl GameState {
         }
         Action::Chance(cards)
     }
-    /// Deals private cards to both players
-    /// Returns a new state
+    /// Samples a private card dealing
     pub fn sample_private_chance<R: Rng>(&self, rng: &mut R) -> Action {
         // give players their cards randomly
         let mut cards: [Card; 4] = [52; 4];
@@ -558,7 +559,7 @@ impl GameState {
         }
         Action::Chance(cards)
     }
-    /// Deals postflop rounds and returns new game state
+    /// Samples a public card dealing
     pub fn sample_public_chance<R: Rng>(&self, rng: &mut R) -> Action {
         assert_eq!(self.current_player, CHANCE_PLAYER);
         let mut cards: [Card; 4] = [52; 4];
@@ -596,7 +597,7 @@ impl GameState {
         }
         Action::Chance(cards)
     }
-    /// Return the value of the pot
+    /// Returns the value of the pot
     pub const fn pot(&self) -> u32 {
         self.pot
     }
@@ -604,14 +605,15 @@ impl GameState {
     pub fn history_string(&self) -> &str {
         &self.history
     }
-    /// Return board cards
+    /// Returns board cards
     pub const fn board(&self) -> &[Card; 5] {
         &self.board
     }
-    /// Get current player idx
+    /// Returns the current player index
     pub const fn current_player(&self) -> i8 {
         self.current_player
     }
+    /// Returns the current round
     pub const fn round(&self) -> BettingRound {
         self.round
     }
@@ -619,6 +621,8 @@ impl GameState {
     pub fn player(&self, player: usize) -> &PlayerState {
         &self.players[player]
     }
+    /// Returns a reference to the acting player
+    /// - **Note:** should only be called on a player action node
     pub fn acting_player(&self) -> &PlayerState {
         assert_ne!(self.current_player, CHANCE_PLAYER);
         &self.players[self.current_player as usize]
@@ -627,6 +631,8 @@ impl GameState {
         assert_ne!(self.current_player, CHANCE_PLAYER);
         &mut self.players[self.current_player as usize]
     }
+    /// Returns a reference to the player not acting
+    /// - **Note:** should only be called on a player action node
     pub fn other_player(&self) -> &PlayerState {
         assert_ne!(self.current_player, CHANCE_PLAYER);
         &self.players[1 - self.current_player as usize]
