@@ -162,12 +162,9 @@ impl<'a> BrThread<'a> {
             let action_count = legal_actions.len();
             let hole_cards = node.acting_player().cards();
             let hand_bucket = solver.get_bucket(hole_cards[0], hole_cards[1], &node);
-            let is_key = format!("{}{}", hand_bucket, node.history_string());
-            let strategy = self.get_strategy(
-                node.history_string(),
-                &hand_bucket.to_string(),
-                action_count,
-            );
+            let private_key = format!("{}-{}", usize::from(node.round()), hand_bucket);
+            let public_key = node.history_string();
+            let strategy = self.get_strategy(&private_key, public_key, action_count);
 
             let a_idx = sample_action_index(&strategy, &mut self.rng);
             for (i, hand) in solver.hand_ranges[usize::from(1 - br_player)]
@@ -179,12 +176,9 @@ impl<'a> BrThread<'a> {
                     continue;
                 }
                 let hand_bucket = solver.get_bucket(hand.0, hand.1, &node);
-                let is_key = format!("{}{}", hand_bucket, node.history_string());
-                let strategy = self.get_strategy(
-                    node.history_string(),
-                    &hand_bucket.to_string(),
-                    action_count,
-                );
+                let private_key = format!("{}-{}", usize::from(node.round()), hand_bucket);
+                let public_key = node.history_string();
+                let strategy = self.get_strategy(&private_key, public_key, action_count);
                 beliefs[i] *= strategy[a_idx];
             }
             normalize(beliefs);
@@ -225,12 +219,9 @@ impl<'a> BrThread<'a> {
                 let opp_hole_cards =
                     solver.hand_ranges[usize::from(1 - br_player)].hands[opp_hand_idx];
                 let opp_bucket = solver.get_bucket(opp_hole_cards.0, opp_hole_cards.1, &next_state);
-                let is_key = format!("{}{}", opp_bucket, next_state.history_string());
-                let opp_strategy = self.get_strategy(
-                    next_state.history_string(),
-                    &opp_bucket.to_string(),
-                    opp_action_count,
-                );
+                let private_key = format!("{}-{}", usize::from(next_state.round()), opp_bucket);
+                let public_key = next_state.history_string();
+                let opp_strategy = self.get_strategy(&private_key, public_key, opp_action_count);
                 fp += beliefs[opp_hand_idx] * opp_strategy[FOLD_IDX];
                 new_beliefs[opp_hand_idx] *= 1f64 - opp_strategy[FOLD_IDX];
             }
@@ -339,13 +330,18 @@ impl<'a> BrThread<'a> {
         }
         wins / games
     }
-    fn get_strategy(&mut self, action_key: &str, card_key: &str, action_count: usize) -> Vec<f64> {
+    fn get_strategy(
+        &mut self,
+        private_key: &str,
+        public_key: &str,
+        action_count: usize,
+    ) -> Vec<f64> {
         let current_strategy = {
             let table = self.solver.infosets.table.read().unwrap();
-            match table.get(action_key) {
+            match table.get(private_key) {
                 Some(child_table) => {
                     let child_table = child_table.lock().unwrap();
-                    match child_table.get(card_key) {
+                    match child_table.get(public_key) {
                         Some(infoset) => infoset.current_strategy(),
                         None => {
                             vec![1f64 / action_count as f64; action_count]

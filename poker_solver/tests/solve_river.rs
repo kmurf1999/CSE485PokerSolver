@@ -27,14 +27,13 @@ fn test_solve_river() -> Result<(), Box<dyn Error>> {
         betting_abstraction,
         card_abstraction: vec![String::from("null")],
     })?;
-    for _ in 0..20 {
-        let br_equities = run_local_br(&solver, 500);
-        println!("best response EV {:?}", br_equities);
-        let equities = solver.run(100_000);
+    for i in 0..20 {
+        let lbr_evs = run_local_br(&solver, 100);
+        println!("best response EV {:?}", lbr_evs);
         // solver.discount(i);
-        println!("solver EV {:?}", equities);
-        let exploitability =
-            0.5 * ((br_equities[0] - equities[0]) + (br_equities[1] - equities[1]));
+        let evs = solver.run(1_000_000);
+        println!("solver EV {:?}", evs);
+        let exploitability = 0.5 * ((lbr_evs[0] - evs[0]) + (lbr_evs[1] - evs[1]));
         println!("exploitability: {}, ", exploitability);
     }
 

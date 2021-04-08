@@ -24,14 +24,17 @@ fn test_solve_turn() -> Result<(), Box<dyn Error>> {
     };
     let solver = Solver::init(SolverOptions {
         initial_state,
-        hand_ranges: [String::from("random"), String::from("random")],
+        hand_ranges: [
+            String::from("22+,AT+,KT+,QT+,JT+"),
+            String::from("22+,A5+,K9+,QT+,JT+"),
+        ],
         betting_abstraction,
-        card_abstraction: vec![String::from("emd"), String::from("ochs")],
+        card_abstraction: vec![String::from("null"), String::from("ochs")],
     })?;
     for _ in 0..20 {
-        let br_equities = run_local_br(&solver, 1_000);
+        let br_equities = run_local_br(&solver, 10_000);
         println!("lbr EV {:?}", br_equities);
-        let equities = solver.run(100_000);
+        let equities = solver.run(500_000);
         // solver.discount(i);
         println!("solver EV {:?}", equities);
         println!("dEV: {}", equities.iter().sum::<f64>().abs());

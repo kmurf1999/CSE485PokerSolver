@@ -95,8 +95,8 @@ fn bench_run_10000(b: &mut Bencher) -> Result<(), Box<dyn Error>> {
 }
 
 #[bench]
-fn bench_run_br_1(b: &mut Bencher) -> Result<(), Box<dyn Error>> {
-    // 3,002,107 ns/iter (+/- 619,469)
+fn bench_run_br_100(b: &mut Bencher) -> Result<(), Box<dyn Error>> {
+    // 134,882,163 ns/iter (+/- 11,066,270)
     let initial_state = GameState::new(GameStateOptions {
         stacks: [10000, 10000],
         initial_board: [0, 12, 14, 50, 6],

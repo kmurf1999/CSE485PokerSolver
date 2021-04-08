@@ -21,7 +21,7 @@ use thiserror::Error as ThisError;
 type Error = Box<dyn std::error::Error>;
 
 /// Regret threshold for pruning
-const NEGATIVE_REGRET_FLOOR: f64 = -300_000_000.0;
+const NEGATIVE_REGRET_FLOOR: f64 = -1_000_000.0;
 /// How many iterations unstill we start pruning
 const PRUNE_THRESHOLD: usize = 1_000_000_000;
 // const STRATEGY_INTERVAL: usize = 10_000;
@@ -119,17 +119,18 @@ impl<'a> SolverThread<'a> {
         let action_count = legal_actions.len();
         let hole_cards = node.acting_player().cards();
         let hand_bucket = self.solver.get_bucket(hole_cards[0], hole_cards[1], &node);
-        let action_key = node.history_string();
+        let private_key = format!("{}-{}", usize::from(node.round()), hand_bucket);
+        let public_key = node.history_string();
         // insert action sequence into hash map if it doesn't exist
         self.solver
             .infosets
-            .insert_action_key(action_key.to_string());
+            .insert_private_key(private_key.to_string());
         // get infoset and current strategy
         let current_strategy = {
             let table = self.solver.infosets.table.read().unwrap();
-            let mut child_table = table.get(action_key).unwrap().lock().unwrap();
+            let mut child_table = table.get(&private_key).unwrap().lock().unwrap();
             let strategy = child_table
-                .entry(hand_bucket.to_string())
+                .entry(public_key.to_string())
                 .or_insert_with(|| Infoset::init(action_count))
                 .current_strategy();
             strategy
@@ -151,9 +152,9 @@ impl<'a> SolverThread<'a> {
 
         // update regrets and or average strategy
         let table = self.solver.infosets.table.read().unwrap();
-        let mut child_table = table.get(action_key).unwrap().lock().unwrap();
+        let mut child_table = table.get(&private_key).unwrap().lock().unwrap();
         let infoset = child_table
-            .entry(hand_bucket.to_string())
+            .entry(public_key.to_string())
             .or_insert_with(|| Infoset::init(action_count));
         if node.current_player() == player as i8 {
             // update regrets
@@ -195,18 +196,19 @@ impl<'a> SolverThread<'a> {
         let action_count = legal_actions.len();
         let hole_cards = node.acting_player().cards();
         let hand_bucket = self.solver.get_bucket(hole_cards[0], hole_cards[1], &node);
-        let action_key = node.history_string();
+        let private_key = format!("{}-{}", usize::from(node.round()), hand_bucket);
+        let public_key = node.history_string();
         // insert action sequence into hash map if it doesn't exist
         self.solver
             .infosets
-            .insert_action_key(action_key.to_string());
+            .insert_private_key(private_key.to_string());
         // get infoset and current strategy
 
         let (current_strategy, regrets) = {
             let table = self.solver.infosets.table.read().unwrap();
-            let mut child_table = table.get(action_key).unwrap().lock().unwrap();
+            let mut child_table = table.get(&private_key).unwrap().lock().unwrap();
             let infoset = child_table
-                .entry(hand_bucket.to_string())
+                .entry(public_key.to_string())
                 .or_insert_with(|| Infoset::init(action_count));
             (
                 infoset.current_strategy(),
@@ -236,9 +238,9 @@ impl<'a> SolverThread<'a> {
         }
         // perform update
         let table = self.solver.infosets.table.read().unwrap();
-        let mut child_table = table.get(action_key).unwrap().lock().unwrap();
+        let mut child_table = table.get(&private_key).unwrap().lock().unwrap();
         let infoset = child_table
-            .entry(hand_bucket.to_string())
+            .entry(public_key.to_string())
             .or_insert_with(|| Infoset::init(action_count));
         if node.current_player() == player as i8 {
             // update regrets
