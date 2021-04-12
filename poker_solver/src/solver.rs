@@ -20,10 +20,22 @@ use thiserror::Error as ThisError;
 
 type Error = Box<dyn std::error::Error>;
 
+macro_rules! max {
+    ($x: expr) => ($x);
+    ($x: expr, $($z: expr),+) => {{
+        let y = max!($($z),*);
+        if $x > y {
+            $x
+        } else {
+            y
+        }
+    }}
+}
+
 /// Regret threshold for pruning
 const NEGATIVE_REGRET_FLOOR: f64 = -1_000_000.0;
 /// How many iterations unstill we start pruning
-const PRUNE_THRESHOLD: usize = 1_000_000_000;
+const PRUNE_THRESHOLD: usize = 1_000_000;
 // const STRATEGY_INTERVAL: usize = 10_000;
 // const DISCOUNT_INTERVAL: usize = 10_000_000;
 
@@ -70,37 +82,46 @@ pub struct Solver {
 
 struct SolverThread<'a> {
     solver: Arc<&'a Solver>,
-    iteration: Arc<AtomicUsize>,
+    iteration_counter: Arc<AtomicUsize>,
+    nodes_touched_counter: Arc<AtomicUsize>,
     rng: SmallRng,
 }
 
 impl<'a> SolverThread<'a> {
-    fn run(&mut self, iterations: usize) -> [f64; 2] {
+    fn run_epoch(&mut self) -> [f64; 2] {
         let mut equity = [0f64; 2];
-        let mut iteration = 0;
-        while iteration < iterations {
+        // let mut iteration = 0;
+        let epoch_size = 10usize.pow(7);
+        while self.nodes_touched_counter.load(Ordering::Relaxed) < epoch_size {
+            self.iteration_counter.fetch_add(1, Ordering::Relaxed);
             for player in 0..2 {
                 if iteration > PRUNE_THRESHOLD {
                     let q = self.rng.gen_range(0.0, 1.0);
                     if q < 0.05 {
-                        equity[usize::from(player)] +=
-                            self.traverse(self.solver.initial_state.clone(), player);
+                        equity[usize::from(player)] += self.traverse(
+                            self.solver.initial_state.clone(),
+                            player,
+                            iteration as f64,
+                        );
                     } else {
-                        equity[usize::from(player)] +=
-                            self.traverse_prune(self.solver.initial_state.clone(), player);
+                        equity[usize::from(player)] += self.traverse_prune(
+                            self.solver.initial_state.clone(),
+                            player,
+                            iteration as f64,
+                        );
                     }
                 } else {
                     equity[usize::from(player)] +=
                         self.traverse(self.solver.initial_state.clone(), player);
                 }
             }
-            iteration = self.iteration.fetch_add(1, Ordering::SeqCst);
         }
         equity
     }
     /// MCCFR implementation
     fn traverse(&mut self, node: GameState, player: u8) -> f64 {
         // return the reward for this player
+        self.nodes_touched_counter.fetch_add(1, Ordering::SeqCst);
         if node.is_terminal() {
             return node.player_reward(usize::from(player));
         }
@@ -165,12 +186,14 @@ impl<'a> SolverThread<'a> {
             // update avg strategy
             for a_idx in 0..action_count {
                 infoset.cummulative_strategy[a_idx] += current_strategy[a_idx];
+                // max!(iteration - 100.0, 0.0) * current_strategy[a_idx];
             }
         }
         node_util
     }
     /// MCCFR implementation with negative regret pruning
     fn traverse_prune(&mut self, node: GameState, player: u8) -> f64 {
+        self.nodes_touched_counter.fetch_add(1, Ordering::SeqCst);
         // return the reward for this player
         if node.is_terminal() {
             return node.player_reward(usize::from(player));
@@ -253,6 +276,8 @@ impl<'a> SolverThread<'a> {
             // update avg strategy
             for a_idx in 0..action_count {
                 infoset.cummulative_strategy[a_idx] += current_strategy[a_idx];
+                // infoset.cummulative_strategy[a_idx] +=
+                // max!(iteration - 100.0, 0.0) * current_strategy[a_idx];
             }
         }
         node_util
@@ -334,24 +359,27 @@ impl Solver {
     }
     /// Run MCCFR for `iterations` iterations
     /// returns the average equity/iter for each player
-    pub fn run(&self, iterations: usize) -> [f64; 2] {
+    pub fn run(&self, i: usize) -> [f64; 2] {
         const N_THREADS: usize = 8;
 
         let equity = Arc::new(Mutex::new([0f64; 2]));
         let solver = Arc::new(self);
-        let counter = Arc::new(AtomicUsize::new(0));
+        let iteration_counter = Arc::new(AtomicUsize::new(0));
+        let nodes_touched_counter = Arc::new(AtomicUsize::new(0));
         crossbeam::scope(|scope| {
             for _ in 0..N_THREADS {
-                let iteration = counter.clone();
+                let iteration_counter = iteration_counter.clone();
+                let nodes_touched_counter = nodes_touched_counter.clone();
                 let solver = solver.clone();
                 let equity = equity.clone();
                 scope.spawn(move |_| {
                     let mut thread = SolverThread {
                         solver,
-                        iteration,
+                        iteration_counter,
+                        nodes_touched_counter,
                         rng: SmallRng::from_entropy(),
                     };
-                    let thread_equity = thread.run(iterations);
+                    let thread_equity = thread.run_epoch();
                     let mut equity = equity.lock().unwrap();
                     for i in 0..2 {
                         equity[i] += thread_equity[i];
@@ -360,27 +388,33 @@ impl Solver {
             }
         })
         .unwrap();
+        let iterations = iteration_counter.load(Ordering::Relaxed) as f64;
+        println!("iterations: {}", iterations);
         let mut equity = Arc::try_unwrap(equity).unwrap().into_inner().unwrap();
         for eq in &mut equity {
-            *eq /= 0.5 * iterations as f64;
+            *eq /= 0.5 * iterations;
         }
         equity
     }
 
     /// Discount all infosets using LCFR
-    // pub fn discount(&mut self, t: usize) {
-    //     let discount_factor = (t as f64) / (1.0 + t as f64);
-    //     for (_, infoset) in self.infosets.table.iter_mut() {
-    //         infoset
-    //             .cummulative_regrets
-    //             .iter_mut()
-    //             .for_each(|val| *val *= discount_factor);
-    //         infoset
-    //             .cummulative_strategy
-    //             .iter_mut()
-    //             .for_each(|val| *val *= discount_factor);
-    //     }
-    // }
+    pub fn discount(&self, t: usize) {
+        let discount_factor = (t as f64) / (1.0 + t as f64);
+        let table = self.infosets.table.read().unwrap();
+        for (_, child_table) in table.iter() {
+            let mut child_table = child_table.lock().unwrap();
+            for (_, infoset) in child_table.iter_mut() {
+                infoset
+                    .cummulative_regrets
+                    .iter_mut()
+                    .for_each(|val| *val *= discount_factor);
+                infoset
+                    .cummulative_strategy
+                    .iter_mut()
+                    .for_each(|val| *val *= discount_factor);
+            }
+        }
+    }
     /// get bucket from hole cards
     pub fn get_bucket(&self, c1: u8, c2: u8, node: &GameState) -> u32 {
         let mut cards: [Card; 7] = [52; 7];

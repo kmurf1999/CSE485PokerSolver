@@ -19,28 +19,23 @@ fn test_solve_turn() -> Result<(), Box<dyn Error>> {
     })?;
     let betting_abstraction = BettingAbstraction {
         bet_sizes: [vec![], vec![], vec![1.0], vec![1.0]],
-        raise_sizes: [vec![], vec![], vec![], vec![1.0]],
+        raise_sizes: [vec![], vec![], vec![1.0], vec![1.0]],
         all_in_threshold: 0f64,
     };
     let solver = Solver::init(SolverOptions {
         initial_state,
-        hand_ranges: [
-            String::from("22+,AT+,KT+,QT+,JT+"),
-            String::from("22+,A5+,K9+,QT+,JT+"),
-        ],
+        hand_ranges: [String::from("random"), String::from("random")],
         betting_abstraction,
-        card_abstraction: vec![String::from("null"), String::from("ochs")],
+        card_abstraction: vec![String::from("null"), String::from("null")],
     })?;
-    for _ in 0..20 {
-        let br_equities = run_local_br(&solver, 10_000);
-        println!("lbr EV {:?}", br_equities);
-        let equities = solver.run(500_000);
-        // solver.discount(i);
-        println!("solver EV {:?}", equities);
-        println!("dEV: {}", equities.iter().sum::<f64>().abs());
-        let exploitability =
-            0.5 * ((br_equities[0] - equities[0]) + (br_equities[1] - equities[1]));
-        println!("exploitability {}, ", exploitability);
+    for i in 1..50 {
+        let lbr_evs = run_local_br(&solver, 5000);
+        println!("best response EV {:?}", lbr_evs);
+        let evs = solver.run(0);
+        solver.discount(i);
+        println!("solver EV {:?}", evs);
+        let exploitability = 0.5 * ((lbr_evs[0] - evs[0]) + (lbr_evs[1] - evs[1]));
+        println!("exploitability: {}, ", exploitability);
     }
     Ok(())
 }

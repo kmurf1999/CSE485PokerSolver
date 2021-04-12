@@ -255,7 +255,7 @@ impl GameState {
         let our_stack_double = our_stack as f64;
         let pot_double = self.pot as f64;
 
-        ACTIONS.iter().for_each(|action| {
+        for action in ACTIONS.iter() {
             match action {
                 Action::BetRaise(_) => {
                     // iterate over all bet sizes in this abstraction for this round
@@ -305,7 +305,7 @@ impl GameState {
                     }
                 }
             }
-        });
+        }
 
         actions
     }
